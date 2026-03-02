@@ -4,98 +4,533 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LegacyLens</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        body {
-            font-family: sans-serif;
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 0 20px;
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+        :root{
+            --bg:#faf9f7;
+            --white:#fff;
+            --surface:#f0efed;
+            --border:#e8e6e3;
+            --border-strong:#d9d7d4;
+            --text:#2c2c2c;
+            --text-2:#6b6b6b;
+            --text-3:#999;
+            --accent:#8b5cf6;
+            --accent-bg:#f3f0ff;
+            --accent-border:#e0d7ff;
+            --code-bg:#1b1b1f;
+            --code-text:#d4d4d8;
+            --green-bg:#ecfdf5;--green-text:#047857;
+            --yellow-bg:#fffbeb;--yellow-text:#b45309;
+            --red-bg:#fef2f2;--red-text:#b91c1c;
+            --thread-w:720px;
+            --shadow-sm:0 1px 2px rgba(0,0,0,.03);
+            --shadow-hover:0 1px 4px rgba(0,0,0,.06);
+            --code-inline:#c7254e;
         }
-        h1 { margin-bottom: 5px; }
-        p.subtitle { color: #666; margin-top: 0; }
-        #search-form { display: flex; gap: 10px; margin-bottom: 20px; }
-        #query-input {
-            flex: 1;
-            padding: 10px;
-            font-size: 16px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+
+        [data-theme="dark"]{
+            --bg:#0e0e0e;
+            --white:#1a1a1a;
+            --surface:#222;
+            --border:#2a2a2a;
+            --border-strong:#333;
+            --text:#e5e5e5;
+            --text-2:#999;
+            --text-3:#666;
+            --accent:#a78bfa;
+            --accent-bg:rgba(167,139,250,.1);
+            --accent-border:rgba(167,139,250,.2);
+            --code-bg:#111;
+            --code-text:#d4d4d8;
+            --green-bg:rgba(52,211,153,.1);--green-text:#6ee7b7;
+            --yellow-bg:rgba(251,191,36,.1);--yellow-text:#fcd34d;
+            --red-bg:rgba(248,113,113,.1);--red-text:#fca5a5;
+            --shadow-sm:0 1px 2px rgba(0,0,0,.2);
+            --shadow-hover:0 2px 8px rgba(0,0,0,.3);
+            --code-inline:#f0abfc;
         }
-        #submit-btn {
-            padding: 10px 20px;
-            font-size: 16px;
-            background: #333;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
+
+        body{
+            font-family:'Inter',-apple-system,system-ui,sans-serif;
+            background:var(--bg);color:var(--text);
+            height:100dvh;display:flex;flex-direction:column;
+            -webkit-font-smoothing:antialiased;
         }
-        #submit-btn:disabled { background: #999; cursor: not-allowed; }
-        #answer { white-space: pre-wrap; line-height: 1.6; }
+
+        /* ═══ HEADER ═══ */
+        .hdr{
+            height:52px;display:flex;align-items:center;justify-content:center;
+            flex-shrink:0;background:var(--white);
+            border-bottom:1px solid var(--border);
+            z-index:10;
+        }
+        .hdr h1{font-size:15px;font-weight:600;letter-spacing:-.02em;color:var(--text)}
+
+        /* ═══ CHAT ═══ */
+        #chat{flex:1;overflow-y:auto}
+        #thread{max-width:var(--thread-w);margin:0 auto;padding:0 28px 160px}
+
+        /* ═══ TURN ═══ */
+        .turn{padding:28px 0;animation:fadeIn .3s ease}
+        .turn+.turn{border-top:1px solid var(--border)}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+        /* user */
+        .t-u{margin-bottom:20px}
+        .t-u-label{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}
+        .t-u-text{font-size:15px;line-height:1.55;color:var(--text)}
+
+        /* assistant */
+        .t-a-label{
+            font-size:13px;font-weight:600;color:var(--accent);
+            margin-bottom:8px;
+        }
+
+        /* ═══ SHIMMER ═══ */
+        .ldr{padding:2px 0}
+        .ldr-bar{
+            height:12px;border-radius:6px;
+            background:linear-gradient(90deg,var(--surface) 0%,var(--border) 50%,var(--surface) 100%);
+            background-size:300% 100%;
+            animation:shim 1.8s ease-in-out infinite;
+            margin-bottom:12px;
+        }
+        .ldr-bar:nth-child(1){width:85%}
+        .ldr-bar:nth-child(2){width:60%}
+        .ldr-bar:nth-child(3){width:72%;animation-delay:.15s}
+        @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+        .ldr-hint{
+            font-size:12px;color:var(--text-3);
+            display:flex;align-items:center;gap:8px;margin-top:4px;
+        }
+        .ldr-hint::before{
+            content:'';width:6px;height:6px;background:var(--accent);
+            border-radius:50%;animation:pulse 1.4s ease infinite;
+        }
+        @keyframes pulse{0%,100%{opacity:.2}50%{opacity:1}}
+
+        /* ═══ MARKDOWN ═══ */
+        .md{font-size:15px;line-height:1.8;color:var(--text)}
+
+        .md h1,.md h2,.md h3{font-weight:600;color:var(--text);line-height:1.35}
+        .md h1{font-size:19px;margin:28px 0 12px}
+        .md h2{font-size:16.5px;margin:24px 0 10px}
+        .md h3{font-size:15px;margin:20px 0 8px}
+        .md :first-child{margin-top:0!important}
+
+        .md p{margin:0 0 16px}
+        .md p:last-child{margin-bottom:0}
+
+        .md ul,.md ol{margin:8px 0 16px 24px}
+        .md li{margin-bottom:8px;line-height:1.7}
+        .md li p{margin-bottom:6px}
+        .md li::marker{color:var(--text-3)}
+
+        .md strong{font-weight:600;color:var(--text)}
+        .md em{color:var(--text-2)}
+        .md a{color:var(--accent);text-decoration:none}
+        .md a:hover{text-decoration:underline}
+
+        .md blockquote{
+            border-left:3px solid var(--accent);
+            padding:4px 0 4px 16px;
+            margin:16px 0;color:var(--text-2);
+            background:var(--accent-bg);
+            border-radius:0 8px 8px 0;
+            padding:12px 16px 12px 16px;
+        }
+
+        .md hr{border:none;border-top:1px solid var(--border);margin:24px 0}
+
+        /* inline code */
+        .md code{
+            font-family:'JetBrains Mono',monospace;
+            font-size:.84em;
+            background:var(--surface);
+            border:1px solid var(--border);
+            padding:1.5px 6px;
+            border-radius:5px;
+            color:var(--code-inline);
+        }
+
+        /* code blocks */
+        .md pre{
+            background:var(--code-bg);
+            border-radius:10px;
+            margin:18px 0;
+            overflow:hidden;
+        }
+        .md pre code{
+            display:block;
+            padding:18px 20px;
+            background:none;border:none;border-radius:0;
+            font-size:13px;line-height:1.75;
+            color:var(--code-text);
+            white-space:pre-wrap;
+            word-wrap:break-word;
+            overflow-wrap:break-word;
+        }
+
+        .cur{
+            display:inline-block;width:2px;height:1.1em;
+            background:var(--accent);vertical-align:text-bottom;
+            animation:blink .55s step-end infinite;margin-left:1px;
+        }
+        @keyframes blink{50%{opacity:0}}
+
+        /* ═══ SOURCES ═══ */
+        .src-section{margin-top:24px}
+        .src-toggle{
+            display:inline-flex;align-items:center;gap:6px;
+            padding:6px 12px;
+            background:var(--surface);
+            border:1px solid var(--border);
+            border-radius:8px;
+            font-size:13px;font-weight:500;color:var(--text-2);
+            cursor:pointer;user-select:none;transition:all .15s;
+        }
+        .src-toggle:hover{background:var(--border);color:var(--text)}
+        .src-toggle svg{width:12px;height:12px;transition:transform .2s}
+        .src-toggle.open svg{transform:rotate(90deg)}
+
+        .src-list{display:none;margin-top:12px}
+        .src-list.open{display:flex;flex-direction:column;gap:8px}
+
+        .sc{
+            background:var(--white);
+            border:1px solid var(--border);
+            border-radius:10px;overflow:hidden;
+            transition:box-shadow .15s;
+        }
+        .sc:hover{box-shadow:var(--shadow-hover)}
+
+        .sc-h{
+            display:flex;justify-content:space-between;align-items:center;
+            padding:10px 14px;cursor:pointer;user-select:none;
+        }
+        .sc-left{display:flex;align-items:center;gap:10px;min-width:0}
+        .sc-num{
+            width:22px;height:22px;
+            display:grid;place-items:center;
+            background:var(--accent-bg);
+            border:1px solid var(--accent-border);
+            border-radius:6px;
+            font-size:11px;font-weight:700;color:var(--accent);
+            flex-shrink:0;
+        }
+        .sc-info{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+        .sc-name{
+            font-family:'JetBrains Mono',monospace;
+            font-size:13px;font-weight:600;color:var(--text);
+        }
+        .sc-path{font-size:11px;color:var(--text-3);font-family:'JetBrains Mono',monospace}
+        .sc-ln{font-size:11px;color:var(--text-3)}
+        .sc-rt{display:flex;align-items:center;gap:8px;flex-shrink:0}
+        .sc-score{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px}
+        .s-hi{background:var(--green-bg);color:var(--green-text)}
+        .s-md{background:var(--yellow-bg);color:var(--yellow-text)}
+        .s-lo{background:var(--red-bg);color:var(--red-text)}
+        .sc-chev{font-size:10px;color:var(--text-3);transition:transform .2s;display:inline-block}
+        .sc-chev.open{transform:rotate(90deg)}
+
+        .sc-deps{
+            font-size:11px;color:var(--text-2);
+            padding:6px 14px 6px 46px;
+            border-top:1px solid var(--border);background:var(--bg);
+        }
+        .sc-code{display:none;background:var(--code-bg);border-top:1px solid var(--border)}
+        .sc-code.open{display:block}
+        .sc-code pre{
+            margin:0;padding:14px 16px;
+            font-family:'JetBrains Mono',monospace;
+            font-size:12px;line-height:1.7;
+            white-space:pre-wrap;word-wrap:break-word;
+            overflow-wrap:break-word;
+            color:var(--code-text);
+            background:none;border:none;border-radius:0;
+        }
+
+        /* ═══ INPUT ═══ */
+        .input-area{
+            flex-shrink:0;padding:0 28px 24px;
+            background:linear-gradient(transparent 0%,var(--bg) 40%);
+            pointer-events:none;
+        }
+        .input-box{
+            pointer-events:all;
+            max-width:var(--thread-w);margin:0 auto;
+            background:var(--white);
+            border:1px solid var(--border-strong);
+            border-radius:16px;
+            padding:10px 12px 10px 20px;
+            display:flex;align-items:flex-end;gap:8px;
+            box-shadow:var(--shadow-sm);
+            transition:border-color .2s,box-shadow .2s;
+        }
+        .input-box:focus-within{
+            border-color:var(--accent);
+            box-shadow:0 0 0 3px rgba(139,92,246,.12),var(--shadow-sm);
+        }
+        .input-box textarea{
+            flex:1;border:none;outline:none;
+            background:transparent;color:var(--text);
+            font-family:'Inter',system-ui,sans-serif;
+            font-size:15px;line-height:1.5;
+            resize:none;max-height:150px;padding:4px 0;
+        }
+        .input-box textarea::placeholder{color:var(--text-3)}
+        .input-box textarea::-webkit-scrollbar{width:0}
+        .send{
+            width:34px;height:34px;display:grid;place-items:center;
+            background:var(--accent);border:none;border-radius:10px;
+            cursor:pointer;transition:all .15s;flex-shrink:0;
+        }
+        .send:hover{background:#7c3aed}
+        .send:disabled{background:var(--border);cursor:default}
+        .send svg{width:15px;height:15px;color:#fff}
+
+        .input-sub{
+            pointer-events:all;max-width:var(--thread-w);margin:8px auto 0;
+            text-align:center;font-size:11px;color:var(--text-3);
+        }
+
+        /* ═══ WELCOME ═══ */
+        .welcome{
+            display:flex;flex-direction:column;align-items:center;
+            text-align:center;padding:80px 20px 40px;
+            animation:fadeIn .4s ease;
+        }
+        .w-logo{
+            width:52px;height:52px;
+            background:linear-gradient(135deg,#a78bfa,#7c3aed);
+            border-radius:14px;display:grid;place-items:center;
+            margin-bottom:24px;
+            box-shadow:0 8px 32px rgba(124,58,237,.18);
+        }
+        .w-logo svg{width:24px;height:24px;color:#fff}
+        .welcome h2{
+            font-size:28px;font-weight:700;
+            letter-spacing:-.03em;color:var(--text);
+            margin-bottom:8px;
+        }
+        .welcome p{font-size:15px;color:var(--text-2);max-width:400px;line-height:1.6;margin-bottom:36px}
+        .examples{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:520px}
+        @media(max-width:540px){.examples{grid-template-columns:1fr}}
+        .ex{
+            text-align:left;background:var(--white);
+            border:1px solid var(--border);
+            border-radius:10px;padding:14px 16px;
+            font-size:13px;color:var(--text-2);
+            line-height:1.5;cursor:pointer;
+            transition:all .15s;
+            box-shadow:var(--shadow-sm);
+        }
+        .ex:hover{border-color:var(--accent-border);background:var(--accent-bg);color:var(--text)}
+
+        /* ═══ THEME TOGGLE ═══ */
+        .theme-btn{
+            position:fixed;top:9px;right:16px;
+            width:34px;height:34px;
+            display:grid;place-items:center;
+            background:var(--surface);
+            border:1px solid var(--border);
+            border-radius:8px;cursor:pointer;
+            transition:all .15s;
+        }
+        .theme-btn:hover{background:var(--border);border-color:var(--border-strong)}
+        .theme-btn svg{width:16px;height:16px;color:var(--text-2)}
+        .theme-btn .icon-sun{display:none}
+        [data-theme="dark"] .theme-btn .icon-moon{display:none}
+        [data-theme="dark"] .theme-btn .icon-sun{display:block}
     </style>
 </head>
 <body>
+
+<div class="hdr">
     <h1>LegacyLens</h1>
-    <p class="subtitle">Search the LAPACK codebase with natural language</p>
+    <button class="theme-btn" id="theme-btn" aria-label="Toggle theme">
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+</div>
 
-    <form id="search-form">
-        <input type="text" id="query-input" placeholder="Ask about LAPACK code..." />
-        <button type="submit" id="submit-btn">Search</button>
-    </form>
+<div id="chat">
+    <div id="thread">
+        <div class="welcome" id="welcome">
+            <div class="w-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                    <path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
+                </svg>
+            </div>
+            <h2>What can I help you find?</h2>
+            <p>Explore and understand the LAPACK Fortran codebase using natural language</p>
+            <div class="examples">
+                <div class="ex" onclick="go(this.textContent)">What does the DGESV subroutine do?</div>
+                <div class="ex" onclick="go(this.textContent)">Find matrix factorization subroutines</div>
+                <div class="ex" onclick="go(this.textContent)">How does error handling work in LAPACK?</div>
+                <div class="ex" onclick="go(this.textContent)">Show me the dependencies of DGETRF</div>
+            </div>
+        </div>
+    </div>
+</div>
 
-    <div id="answer"></div>
+<div class="input-area">
+    <div class="input-box">
+        <textarea id="input" rows="1" placeholder="Ask about LAPACK code..." autofocus></textarea>
+        <button class="send" id="send-btn" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+            </svg>
+        </button>
+    </div>
+    <div class="input-sub">LegacyLens can make mistakes. Verify important code references.</div>
+</div>
 
-    <script>
-        const form = document.getElementById('search-form');
-        const input = document.getElementById('query-input');
-        const btn = document.getElementById('submit-btn');
-        const answerDiv = document.getElementById('answer');
+<script>
+/* ── Theme toggle ── */
+const themeBtn=document.getElementById('theme-btn');
+const savedTheme=localStorage.getItem('ll-theme');
+if(savedTheme)document.documentElement.setAttribute('data-theme',savedTheme);
+else if(window.matchMedia('(prefers-color-scheme:dark)').matches)document.documentElement.setAttribute('data-theme','dark');
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const query = input.value.trim();
-            if (!query) return;
+themeBtn.addEventListener('click',()=>{
+    const isDark=document.documentElement.getAttribute('data-theme')==='dark';
+    const next=isDark?'light':'dark';
+    if(next==='light')document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme','dark');
+    localStorage.setItem('ll-theme',next);
+});
 
-            // Clear previous answer and disable button
-            answerDiv.textContent = '';
-            btn.disabled = true;
-            btn.textContent = 'Searching...';
+const input=document.getElementById('input');
+const sendBtn=document.getElementById('send-btn');
+const thread=document.getElementById('thread');
+const chatEl=document.getElementById('chat');
+const welcome=document.getElementById('welcome');
+let sc=0;
 
-            try {
-                const response = await fetch('/query', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query }),
-                });
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function bottom(){chatEl.scrollTop=chatEl.scrollHeight}
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
+input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,150)+'px'});
+input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit()}});
+sendBtn.addEventListener('click',e=>{e.preventDefault();submit()});
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+function go(t){input.value=t;submit()}
+function submit(){
+    const q=input.value.trim();if(!q||sendBtn.disabled)return;
+    input.value='';input.style.height='auto';sendBtn.disabled=true;doQuery(q);
+}
 
-                    const text = decoder.decode(value);
-                    const lines = text.split('\n');
+function doQuery(q){
+    welcome.style.display='none';
+    const turn=document.createElement('div');
+    turn.className='turn';
+    turn.innerHTML=`
+        <div class="t-u">
+            <div class="t-u-label">You</div>
+            <div class="t-u-text">${esc(q)}</div>
+        </div>
+        <div class="t-a" id="cur-block">
+            <div class="t-a-label">LegacyLens</div>
+            <div class="md" id="cur-md">
+                <div class="ldr" id="ldr">
+                    <div class="ldr-bar"></div>
+                    <div class="ldr-bar"></div>
+                    <div class="ldr-bar"></div>
+                    <div class="ldr-hint">Searching codebase</div>
+                </div>
+            </div>
+        </div>
+    `;
+    thread.appendChild(turn);bottom();
+    const mdEl=document.getElementById('cur-md');
+    const block=document.getElementById('cur-block');
+    doStream(q,mdEl,block);
+}
 
-                    for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        const data = line.slice(6);
-                        if (data === '[DONE]') break;
-
-                        const parsed = JSON.parse(data);
-                        if (parsed.type === 'answer') {
-                            answerDiv.textContent += parsed.content;
-                        }
-                    }
-                }
-            } catch (err) {
-                answerDiv.textContent = 'Error: ' + err.message;
-            }
-
-            btn.disabled = false;
-            btn.textContent = 'Search';
+async function doStream(q,mdEl,block){
+    let raw='';
+    try{
+        const res=await fetch('/query',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({query:q}),
         });
-    </script>
+        const reader=res.body.getReader();
+        const dec=new TextDecoder();let buf='';
+        while(true){
+            const{done,value}=await reader.read();if(done)break;
+            buf+=dec.decode(value,{stream:true});
+            const lines=buf.split('\n');buf=lines.pop();
+            for(const ln of lines){
+                if(!ln.startsWith('data: '))continue;
+                const d=ln.slice(6);if(d==='[DONE]')continue;
+                try{
+                    const p=JSON.parse(d);
+                    if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
+                    else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);addSrc(block,p.chunks);bottom()}
+                }catch(_){}
+            }
+        }
+        mdEl.removeAttribute('id');renderMd(mdEl,raw,false);
+    }catch(err){
+        const l=document.getElementById('ldr');if(l)l.remove();
+        mdEl.innerHTML='<p style="color:var(--red-text)">Something went wrong. Please try again.</p>';
+    }
+    sendBtn.disabled=false;input.focus();
+}
+
+function renderMd(el,text,streaming){
+    const l=document.getElementById('ldr');if(l)l.remove();
+    el.innerHTML=marked.parse(text);
+    if(streaming)el.innerHTML+='<span class="cur"></span>';
+}
+
+function addSrc(container,chunks){
+    if(!chunks||!chunks.length)return;
+    const id='sl-'+sc++;
+    const div=document.createElement('div');
+    div.className='src-section';
+    let cards='';
+    chunks.forEach((c,i)=>{
+        const uid=id+'-'+i;
+        const num=i+1;
+        const pct=(c.score*100).toFixed(1);
+        const cls=c.score>=.75?'s-hi':c.score>=.5?'s-md':'s-lo';
+        const deps=c.dependencies&&c.dependencies.length
+            ?`<div class="sc-deps">Calls: ${Array.isArray(c.dependencies)?c.dependencies.join(', '):c.dependencies}</div>`:'';
+        cards+=`<div class="sc">
+            <div class="sc-h" onclick="document.getElementById('cd-${uid}').classList.toggle('open');document.getElementById('cv-${uid}').classList.toggle('open')">
+                <div class="sc-left">
+                    <div class="sc-num">${num}</div>
+                    <div class="sc-info">
+                        <span class="sc-name">${esc(c.name)}</span>
+                        <span class="sc-path">${esc(c.file_path)}</span>
+                        <span class="sc-ln">lines ${c.start_line}\u2013${c.end_line}</span>
+                    </div>
+                </div>
+                <div class="sc-rt">
+                    <span class="sc-score ${cls}">${pct}%</span>
+                    <span class="sc-chev" id="cv-${uid}">\u25B6</span>
+                </div>
+            </div>
+            ${deps}
+            <div class="sc-code" id="cd-${uid}"><pre>${esc(c.text)}</pre></div>
+        </div>`;
+    });
+    div.innerHTML=`
+        <div class="src-toggle" onclick="this.classList.toggle('open');document.getElementById('${id}').classList.toggle('open')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            ${chunks.length} source${chunks.length>1?'s':''} found
+        </div>
+        <div class="src-list" id="${id}">${cards}</div>`;
+    container.appendChild(div);
+}
+</script>
 </body>
 </html>
