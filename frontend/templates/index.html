@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LegacyLens</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        h1 { margin-bottom: 5px; }
+        p.subtitle { color: #666; margin-top: 0; }
+        #search-form { display: flex; gap: 10px; margin-bottom: 20px; }
+        #query-input {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #submit-btn {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #submit-btn:disabled { background: #999; cursor: not-allowed; }
+        #answer { white-space: pre-wrap; line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <h1>LegacyLens</h1>
+    <p class="subtitle">Search the LAPACK codebase with natural language</p>
+
+    <form id="search-form">
+        <input type="text" id="query-input" placeholder="Ask about LAPACK code..." />
+        <button type="submit" id="submit-btn">Search</button>
+    </form>
+
+    <div id="answer"></div>
+
+    <script>
+        const form = document.getElementById('search-form');
+        const input = document.getElementById('query-input');
+        const btn = document.getElementById('submit-btn');
+        const answerDiv = document.getElementById('answer');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = input.value.trim();
+            if (!query) return;
+
+            // Clear previous answer and disable button
+            answerDiv.textContent = '';
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6);
+                        if (data === '[DONE]') break;
+
+                        const parsed = JSON.parse(data);
+                        if (parsed.type === 'answer') {
+                            answerDiv.textContent += parsed.content;
+                        }
+                    }
+                }
+            } catch (err) {
+                answerDiv.textContent = 'Error: ' + err.message;
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Search';
+        });
+    </script>
+</body>
+</html>
