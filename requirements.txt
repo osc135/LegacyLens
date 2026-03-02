@@ -1,0 +1,10 @@
+openai
+pinecone-client
+python-dotenv
+tiktoken
+langchain
+langchain-openai
+langchain-pinecone
+fastapi
+uvicorn
+jinja2
