@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from datetime import datetime, timezone
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -8,7 +10,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT
 from app.retrieval import search, resolve_dependency_graph
 from app.generation import generate_answer_stream, generate_followups, generate_deps_stream
 
@@ -29,6 +31,27 @@ class QueryRequest(BaseModel):
     @classmethod
     def sanitize_query(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        if v not in VALID_MODES:
+            return "ask"
+        return v
+
+
+class FeedbackRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=MAX_QUERY_LENGTH)
+    mode: str = Field(default="ask")
+    feedback: str = Field(...)
+    comment: str = Field(default="", max_length=MAX_FEEDBACK_COMMENT)
+
+    @field_validator("feedback")
+    @classmethod
+    def validate_feedback(cls, v: str) -> str:
+        if v not in ("up", "down"):
+            raise ValueError("feedback must be 'up' or 'down'")
+        return v
 
     @field_validator("mode")
     @classmethod
@@ -140,6 +163,36 @@ async def query(request: Request):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
+
+
+@app.post("/feedback")
+@limiter.limit("30/minute")
+async def feedback(request: Request):
+    """Store user feedback (thumbs up/down with optional comment)."""
+    try:
+        body = await request.json()
+        req = FeedbackRequest(**body)
+    except Exception as e:
+        logger.warning("Invalid feedback request: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid feedback request.")
+
+    os.makedirs(FEEDBACK_DIR, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "query": req.query,
+        "mode": req.mode,
+        "feedback": req.feedback,
+        "comment": req.comment,
+    }
+    feedback_path = os.path.join(FEEDBACK_DIR, "feedback.jsonl")
+    try:
+        with open(feedback_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.error("Failed to write feedback: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to store feedback.")
+
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

@@ -567,6 +567,159 @@
             text-align:center;
         }
         .md .mermaid-container svg{max-width:100%;height:auto}
+
+        /* ═══ COPY BUTTONS ═══ */
+        .copy-wrap{position:relative}
+        .md pre{position:relative}
+        .sc-code{position:relative}
+        .copy-btn{
+            position:absolute;top:8px;right:8px;z-index:2;
+            width:28px;height:28px;
+            display:grid;place-items:center;
+            background:var(--glass-strong);
+            border:1px solid var(--glass-border);
+            border-radius:6px;cursor:pointer;
+            transition:all .2s;opacity:0;
+            backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+        }
+        .copy-btn svg{width:14px;height:14px;color:var(--text-2)}
+        .copy-wrap:hover .copy-btn,
+        .md pre:hover>.copy-btn,
+        .sc-code:hover>.copy-btn,
+        .dep-graph:hover>.copy-btn{opacity:1}
+        .copy-btn:hover{background:var(--glass-border-strong);border-color:var(--accent)}
+        .copy-btn.copied{border-color:var(--green-text);background:var(--green-bg)}
+        .copy-btn.copied svg{color:var(--green-text)}
+
+        /* ═══ EXPORT BUTTON ═══ */
+        .export-btn{
+            position:fixed;top:11px;right:56px;z-index:11;
+            width:34px;height:34px;
+            display:grid;place-items:center;
+            background:var(--glass);
+            border:1px solid var(--glass-border);
+            border-radius:8px;cursor:pointer;
+            transition:all .2s;
+            backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+        }
+        .export-btn:hover{background:var(--glass-strong);border-color:var(--glass-border-strong)}
+        .export-btn:disabled{opacity:.35;cursor:default}
+        .export-btn:disabled:hover{background:var(--glass);border-color:var(--glass-border)}
+        .export-btn svg{width:16px;height:16px;color:var(--text-2)}
+
+        /* ═══ FEEDBACK ═══ */
+        .fb-bar{display:flex;align-items:center;gap:6px;margin-top:16px}
+        .fb-btn{
+            width:32px;height:32px;
+            display:grid;place-items:center;
+            background:var(--glass);
+            border:1px solid var(--glass-border);
+            border-radius:8px;cursor:pointer;
+            transition:all .2s;
+        }
+        .fb-btn:hover{background:var(--glass-strong);border-color:var(--glass-border-strong)}
+        .fb-btn svg{width:16px;height:16px;color:var(--text-2)}
+        .fb-btn.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
+        .fb-btn.selected svg{color:var(--accent-2)}
+        .fb-btn:disabled{cursor:default;opacity:.5}
+        .fb-comment{
+            display:none;align-items:center;gap:6px;margin-top:8px;
+        }
+        .fb-comment.show{display:flex}
+        .fb-comment input{
+            flex:1;
+            background:var(--glass);
+            border:1px solid var(--glass-border);
+            border-radius:8px;
+            padding:8px 12px;
+            color:var(--text);
+            font-family:'Inter',sans-serif;
+            font-size:13px;
+            outline:none;
+        }
+        .fb-comment input:focus{border-color:var(--accent)}
+        .fb-comment button{
+            padding:8px 14px;
+            background:var(--gradient);
+            border:none;border-radius:8px;
+            color:#fff;font-size:13px;font-weight:500;
+            cursor:pointer;transition:all .2s;
+        }
+        .fb-comment button:hover{box-shadow:0 2px 12px rgba(124,106,239,.3)}
+        .fb-thanks{
+            font-size:12px;color:var(--green-text);
+            margin-top:8px;display:none;
+        }
+        .fb-thanks.show{display:block}
+
+        /* ═══ PRINT / EXPORT ═══ */
+        @media print{
+            *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+            body{background:#fff!important;color:#1a1a2e!important;height:auto!important;overflow:visible!important;display:block!important}
+            body::before,body::after,#particles,.hdr,.input-area,.theme-btn,.export-btn,
+            .copy-btn,.fb-bar,.fb-comment,.fb-thanks,.followups,.welcome{display:none!important}
+            #chat{overflow:visible!important;position:static!important;height:auto!important}
+            #thread{max-width:100%!important;padding:0 20px 0 20px!important}
+
+            /* Print header injected by JS */
+            .print-header{display:block!important;text-align:center;padding:12px 0 8px;border-bottom:2px solid #5b4cc4;margin-bottom:12px}
+            .print-header h2{font-size:22px;color:#5b4cc4;margin:0 0 4px}
+            .print-header p{font-size:11px;color:#888;margin:0}
+
+            /* Turns — allow breaks inside (turns are long), avoid orphan headers */
+            .turn{padding:12px 0!important;border-top:1px solid #ddd!important}
+            .turn:first-of-type{border-top:none!important}
+            .t-u{page-break-after:avoid}
+            .t-a-label{page-break-after:avoid}
+            .md h1,.md h2,.md h3{page-break-after:avoid}
+            .src-header{page-break-after:avoid}
+            .dep-graph{page-break-inside:avoid}
+            .sc{page-break-inside:avoid}
+            .mermaid-container{page-break-inside:avoid}
+
+            .t-u-label,.t-a-label{color:#5b4cc4!important;-webkit-text-fill-color:#5b4cc4!important;background:none!important}
+            .t-u-text{color:#1a1a2e!important}
+            .md{color:#222!important}
+            .md h1,.md h2,.md h3,.md strong{color:#1a1a2e!important}
+            .md p,.md li{color:#333!important}
+            .md code{background:#eef!important;border-color:#ddd!important;color:#5b4cc4!important}
+            .md pre{background:#f4f4f8!important;border-color:#ddd!important}
+            .md pre code{color:#333!important;background:none!important;border:none!important}
+            .md blockquote{background:#f4f0ff!important;border-left-color:#5b4cc4!important;color:#444!important}
+            .md table{background:#fff!important}
+            .md th{background:#f4f4f8!important;color:#444!important;border-color:#ddd!important}
+            .md td{border-color:#ddd!important;color:#333!important}
+            .md a,.cite{color:#5b4cc4!important}
+
+            .dep-graph{background:#f8f8fc!important;border-color:#ddd!important;color:#333!important}
+            .dep-graph-title{color:#5b4cc4!important}
+            .graph-name{color:#5b4cc4!important}
+            .graph-name.external{color:#999!important}
+            .graph-tag.found{background:#e6faf0!important;color:#1a9960!important;border-color:#b6e8d0!important}
+            .graph-tag.ext{background:#f0f0f0!important;color:#999!important;border-color:#ddd!important}
+
+            .mermaid-container{background:#fff!important;border-color:#ddd!important}
+
+            /* Mermaid SVG overrides for light background */
+            .mermaid-container .nodeLabel{color:#1a1a2e!important}
+            .mermaid-container .node rect,
+            .mermaid-container .node polygon,
+            .mermaid-container .node circle{fill:#f0edff!important;stroke:#5b4cc4!important}
+            .mermaid-container .edgePath .path{stroke:#666!important}
+            .mermaid-container .edgeLabel{background-color:#fff!important;color:#333!important}
+            .mermaid-container marker path{fill:#666!important}
+            .mermaid-container .cluster rect{fill:#f8f8fc!important;stroke:#ddd!important}
+
+            .src-header{color:#5b4cc4!important}
+            .sc{background:#fafaff!important;border-color:#ddd!important}
+            .sc:hover{background:#fafaff!important}
+            .sc-name{color:#333!important}
+            .sc-path,.sc-ln{color:#888!important}
+            .sc-code{display:block!important}
+            .sc-code pre{background:#f4f4f8!important;border-color:#ddd!important;color:#333!important}
+            .sc-chev{display:none!important}
+            .sc-deps{background:#f8f8fc!important;border-color:#ddd!important;color:#555!important}
+        }
     </style>
 </head>
 <body>
@@ -584,6 +737,14 @@
         <span class="hdr-badge">AI</span>
     </div>
 </div>
+
+<button class="export-btn" id="export-btn" disabled title="Print / Save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+</button>
 
 <div id="chat">
     <div id="thread">
@@ -728,11 +889,93 @@
     tick();
 })();
 
+/* ── Copy button helpers ── */
+const COPY_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+const CHECK_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+function addCopyBtn(parentEl,getText){
+    const btn=document.createElement('button');
+    btn.className='copy-btn';
+    btn.innerHTML=COPY_ICON;
+    btn.title='Copy';
+    btn.addEventListener('click',async(e)=>{
+        e.stopPropagation();
+        try{
+            await navigator.clipboard.writeText(getText());
+            btn.innerHTML=CHECK_ICON;
+            btn.classList.add('copied');
+            btn.title='Copied!';
+            setTimeout(()=>{btn.innerHTML=COPY_ICON;btn.classList.remove('copied');btn.title='Copy'},1500);
+        }catch(err){console.error('Copy failed:',err)}
+    });
+    parentEl.appendChild(btn);
+}
+
+/* ── Conversation log for export ── */
+const conversationLog=[];
+
+/* ── Feedback helper ── */
+function sendFeedback(query,mode,feedback,comment){
+    fetch('/feedback',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({query,mode,feedback,comment:comment||''}),
+    }).catch(err=>console.error('Feedback send failed:',err));
+}
+
+function addFeedback(container,query,mode){
+    const bar=document.createElement('div');
+    bar.className='fb-bar';
+    const upBtn=document.createElement('button');
+    upBtn.className='fb-btn';
+    upBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>';
+    upBtn.title='Helpful';
+    const downBtn=document.createElement('button');
+    downBtn.className='fb-btn';
+    downBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/><path d="M17 2h3a2 2 0 012 2v7a2 2 0 01-2 2h-3"/></svg>';
+    downBtn.title='Not helpful';
+    bar.appendChild(upBtn);
+    bar.appendChild(downBtn);
+
+    const commentRow=document.createElement('div');
+    commentRow.className='fb-comment';
+    commentRow.innerHTML='<input type="text" placeholder="What could be improved?" maxlength="500"><button>Send</button>';
+
+    const thanks=document.createElement('div');
+    thanks.className='fb-thanks';
+    thanks.textContent='Thanks for your feedback!';
+
+    function lock(){upBtn.disabled=true;downBtn.disabled=true;thanks.classList.add('show');commentRow.classList.remove('show')}
+
+    upBtn.addEventListener('click',()=>{
+        upBtn.classList.add('selected');
+        sendFeedback(query,mode,'up','');
+        lock();
+    });
+    downBtn.addEventListener('click',()=>{
+        downBtn.classList.add('selected');
+        commentRow.classList.add('show');
+        commentRow.querySelector('input').focus();
+    });
+    commentRow.querySelector('button').addEventListener('click',()=>{
+        const comment=commentRow.querySelector('input').value.trim();
+        sendFeedback(query,mode,'down',comment);
+        lock();
+    });
+    commentRow.querySelector('input').addEventListener('keydown',e=>{
+        if(e.key==='Enter'){commentRow.querySelector('button').click()}
+    });
+
+    container.appendChild(bar);
+    container.appendChild(commentRow);
+    container.appendChild(thanks);
+}
+
 const input=document.getElementById('input');
 const sendBtn=document.getElementById('send-btn');
 const thread=document.getElementById('thread');
 const chatEl=document.getElementById('chat');
 const welcome=document.getElementById('welcome');
+const exportBtn=document.getElementById('export-btn');
 let sc=0;
 let currentMode='ask';
 
@@ -748,6 +991,56 @@ modeTabs.addEventListener('click',e=>{
     if(currentMode==='patterns'){input.rows=4;input.style.height='auto';input.style.height=Math.min(input.scrollHeight,200)+'px'}
     else{input.rows=1;input.style.height='auto'}
     input.focus();
+});
+
+/* ── Export conversation as PDF via print ── */
+exportBtn.addEventListener('click',async()=>{
+    if(!conversationLog.length)return;
+    const today=new Date().toISOString().slice(0,10);
+
+    // Inject a print header (hidden on screen, shown only in print)
+    let printHdr=document.getElementById('print-hdr');
+    if(!printHdr){
+        printHdr=document.createElement('div');
+        printHdr.id='print-hdr';
+        printHdr.className='print-header';
+        printHdr.style.display='none';
+        thread.insertBefore(printHdr,thread.firstChild);
+    }
+    printHdr.innerHTML='<h2>LegacyLens Conversation</h2><p>Exported '+today+'</p>';
+
+    // Expand all source code blocks before printing
+    document.querySelectorAll('.sc-code').forEach(el=>el.classList.add('open'));
+
+    // Re-render mermaid with light theme for print
+    const mermaidContainers=document.querySelectorAll('.mermaid-container');
+    const savedSvgs=[];
+    if(mermaidContainers.length){
+        mermaidContainers.forEach(c=>{savedSvgs.push(c.innerHTML)});
+        mermaid.initialize({startOnLoad:false,theme:'default',themeVariables:{primaryColor:'#f0edff',primaryTextColor:'#1a1a2e',primaryBorderColor:'#5b4cc4',lineColor:'#666',secondaryColor:'#f8f8fc',tertiaryColor:'#fff',background:'#fff',mainBkg:'#f0edff',nodeBorder:'#5b4cc4',clusterBkg:'#f8f8fc',titleColor:'#1a1a2e',edgeLabelBackground:'#fff'}});
+        // Re-inject source and re-render
+        mermaidContainers.forEach(c=>{
+            const mDiv=c.querySelector('.mermaid');
+            if(mDiv){
+                const src=mDiv.getAttribute('data-original-src');
+                if(src){mDiv.removeAttribute('data-processed');mDiv.innerHTML=src}
+            }
+        });
+        try{await mermaid.run({querySelector:'.mermaid'})}catch(e){console.warn('Mermaid re-render:',e)}
+    }
+
+    window.print();
+
+    // Restore dark mermaid theme
+    if(mermaidContainers.length){
+        mermaid.initialize({startOnLoad:false,theme:'dark',themeVariables:{primaryColor:'#7c6aef',primaryTextColor:'#e8e8ef',primaryBorderColor:'#4f8efa',lineColor:'#8a8a9a',secondaryColor:'#1a1a2e',tertiaryColor:'#0e0e16'}});
+        mermaidContainers.forEach((c,i)=>{if(savedSvgs[i])c.innerHTML=savedSvgs[i]});
+    }
+
+    // Collapse source code back
+    document.querySelectorAll('.sc-code').forEach(el=>{
+        if(!el.dataset.wasOpen)el.classList.remove('open');
+    });
 });
 
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
@@ -774,6 +1067,7 @@ function submit(){
 function doQuery(q,mode){
     mode=mode||currentMode;
     welcome.style.display='none';
+    conversationLog.push({query:q,mode:mode,answer:'',sources:[],graph:null,followups:[]});
     const modeLabels={ask:'',explain:' · Explain',docs:' · Docs',patterns:' · Patterns',deps:' · Dep Map'};
     const hints={ask:'Searching codebase',explain:'Analyzing code',docs:'Generating documentation',patterns:'Finding similar patterns',deps:'Resolving dependencies'};
     const turn=document.createElement('div');
@@ -803,6 +1097,7 @@ function doQuery(q,mode){
 
 async function doStream(q,mdEl,block,mode){
     let raw='';
+    const entry=conversationLog[conversationLog.length-1];
     try{
         const res=await fetch('/query',{
             method:'POST',headers:{'Content-Type':'application/json'},
@@ -820,14 +1115,21 @@ async function doStream(q,mdEl,block,mode){
                 const d=dataLine.slice(6);if(d==='[DONE]')continue;
                 try{
                     const p=JSON.parse(d);
-                    if(p.type==='graph'){addGraph(block,p.data);bottom()}
+                    if(p.type==='graph'){addGraph(block,p.data);if(p.data)entry.graph=block.querySelector('.dep-graph')?.textContent.replace('Call Graph','').trim()||null;bottom()}
                     else if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
-                    else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);addSrc(block,p.chunks);bottom()}
-                    else if(p.type==='followups'){addFollowups(block,p.questions);bottom()}
+                    else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);addSrc(block,p.chunks);entry.sources=p.chunks||[];bottom()}
+                    else if(p.type==='followups'){addFollowups(block,p.questions);entry.followups=p.questions||[];bottom()}
                 }catch(err){console.error('SSE parse error:',err,d)}
             }
         }
+        entry.answer=raw;
         mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);
+        // Copy button on markdown response
+        mdEl.classList.add('copy-wrap');
+        addCopyBtn(mdEl,()=>raw);
+        // Feedback buttons
+        addFeedback(block,q,mode);
+        exportBtn.disabled=false;
     }catch(err){
         const l=document.getElementById('ldr');if(l)l.remove();
         mdEl.innerHTML='<p style="color:var(--red-text)">Something went wrong. Please try again.</p>';
@@ -898,6 +1200,11 @@ function addSrc(container,chunks){
         <div class="src-header">Sources</div>
         <div class="src-list">${cards}</div>`;
     container.appendChild(div);
+    // Add copy buttons to source code blocks
+    div.querySelectorAll('.sc-code').forEach(codeEl=>{
+        const pre=codeEl.querySelector('pre');
+        if(pre)addCopyBtn(codeEl,()=>pre.textContent);
+    });
 }
 
 function addGraph(container,graph){
@@ -934,19 +1241,23 @@ function addGraph(container,graph){
     const mdEl=container.querySelector('.md');
     if(mdEl)container.insertBefore(div,mdEl);
     else container.appendChild(div);
+    addCopyBtn(div,()=>div.textContent.replace('Call Graph','').trim());
 }
 
 function renderMermaid(el){
     const codeBlocks=el.querySelectorAll('pre code.language-mermaid');
     codeBlocks.forEach((block,i)=>{
+        const src=block.textContent;
         const pre=block.parentElement;
         const container=document.createElement('div');
-        container.className='mermaid-container';
+        container.className='mermaid-container copy-wrap';
         const mermaidDiv=document.createElement('div');
         mermaidDiv.className='mermaid';
-        mermaidDiv.textContent=block.textContent;
+        mermaidDiv.textContent=src;
+        mermaidDiv.setAttribute('data-original-src',src);
         container.appendChild(mermaidDiv);
         pre.replaceWith(container);
+        addCopyBtn(container,()=>src);
     });
     if(codeBlocks.length>0){
         try{mermaid.run({querySelector:'.mermaid'})}catch(e){console.warn('Mermaid render error:',e)}

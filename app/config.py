@@ -42,5 +42,9 @@ DEPS_MAX_DEPTH = 2
 DEPS_MAX_NODES = 30
 PATTERNS_TOP_K = 5
 
+# Feedback
+FEEDBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "feedback")
+MAX_FEEDBACK_COMMENT = 500
+
 # Paths
 LAPACK_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "lapack")
