@@ -9,3 +9,4 @@ fastapi
 uvicorn
 jinja2
 slowapi
+langfuse

@@ -1,5 +1,5 @@
 import logging
-from openai import OpenAI
+from langfuse.openai import OpenAI
 from app.config import OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_FOLLOWUP_ANSWER_CHARS
 
 logger = logging.getLogger(__name__)

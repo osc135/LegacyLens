@@ -915,14 +915,14 @@ function addCopyBtn(parentEl,getText){
 const conversationLog=[];
 
 /* ── Feedback helper ── */
-function sendFeedback(query,mode,feedback,comment){
+function sendFeedback(query,mode,feedback,comment,traceId){
     fetch('/feedback',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({query,mode,feedback,comment:comment||''}),
+        body:JSON.stringify({query,mode,feedback,comment:comment||'',trace_id:traceId||''}),
     }).catch(err=>console.error('Feedback send failed:',err));
 }
 
-function addFeedback(container,query,mode){
+function addFeedback(container,query,mode,traceId){
     const bar=document.createElement('div');
     bar.className='fb-bar';
     const upBtn=document.createElement('button');
@@ -948,7 +948,7 @@ function addFeedback(container,query,mode){
 
     upBtn.addEventListener('click',()=>{
         upBtn.classList.add('selected');
-        sendFeedback(query,mode,'up','');
+        sendFeedback(query,mode,'up','',traceId);
         lock();
     });
     downBtn.addEventListener('click',()=>{
@@ -958,7 +958,7 @@ function addFeedback(container,query,mode){
     });
     commentRow.querySelector('button').addEventListener('click',()=>{
         const comment=commentRow.querySelector('input').value.trim();
-        sendFeedback(query,mode,'down',comment);
+        sendFeedback(query,mode,'down',comment,traceId);
         lock();
     });
     commentRow.querySelector('input').addEventListener('keydown',e=>{
@@ -1096,7 +1096,7 @@ function doQuery(q,mode){
 }
 
 async function doStream(q,mdEl,block,mode){
-    let raw='';
+    let raw='';let traceId='';
     const entry=conversationLog[conversationLog.length-1];
     try{
         const res=await fetch('/query',{
@@ -1118,6 +1118,7 @@ async function doStream(q,mdEl,block,mode){
                     if(p.type==='graph'){addGraph(block,p.data);if(p.data)entry.graph=block.querySelector('.dep-graph')?.textContent.replace('Call Graph','').trim()||null;bottom()}
                     else if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
                     else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);addSrc(block,p.chunks);entry.sources=p.chunks||[];bottom()}
+                    else if(p.type==='trace'){traceId=p.trace_id||''}
                     else if(p.type==='followups'){addFollowups(block,p.questions);entry.followups=p.questions||[];bottom()}
                 }catch(err){console.error('SSE parse error:',err,d)}
             }
@@ -1128,7 +1129,7 @@ async function doStream(q,mdEl,block,mode){
         mdEl.classList.add('copy-wrap');
         addCopyBtn(mdEl,()=>raw);
         // Feedback buttons
-        addFeedback(block,q,mode);
+        addFeedback(block,q,mode,traceId);
         exportBtn.disabled=false;
     }catch(err){
         const l=document.getElementById('ldr');if(l)l.remove();

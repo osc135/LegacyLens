@@ -1,5 +1,5 @@
 import logging
-from openai import OpenAI
+from langfuse.openai import OpenAI
 from pinecone import Pinecone
 from collections import deque
 from app.config import (
@@ -17,7 +17,7 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
-# Initialize clients
+# Initialize clients — langfuse.openai.OpenAI auto-traces all LLM/embedding calls
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(PINECONE_INDEX_NAME)

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -10,14 +11,21 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from langfuse import get_client
 from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT
 from app.retrieval import search, resolve_dependency_graph
 from app.generation import generate_answer_stream, generate_followups, generate_deps_stream
 
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    get_client().flush()
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="LegacyLens")
+app = FastAPI(title="LegacyLens", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
@@ -45,6 +53,7 @@ class FeedbackRequest(BaseModel):
     mode: str = Field(default="ask")
     feedback: str = Field(...)
     comment: str = Field(default="", max_length=MAX_FEEDBACK_COMMENT)
+    trace_id: str = Field(default="")
 
     @field_validator("feedback")
     @classmethod
@@ -86,81 +95,95 @@ async def query(request: Request):
         logger.warning("Invalid request: %s", e)
         raise HTTPException(status_code=400, detail="Invalid request. Provide a 'query' string.")
 
-    # Step 1: Retrieve relevant code chunks (or dependency graph)
-    graph = None
-    try:
-        if req.mode == "deps":
-            graph = resolve_dependency_graph(req.query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
-            # Build results from found graph nodes for source cards
-            results = [
-                {
-                    "name": name,
-                    "file_path": info.get("file_path", ""),
-                    "start_line": info.get("start_line", 0),
-                    "end_line": info.get("end_line", 0),
-                    "dependencies": ", ".join(info.get("dependencies", [])),
-                    "text": info.get("text", ""),
-                    "score": 1.0,
-                }
-                for name, info in graph["nodes"].items()
-                if info.get("found")
-            ]
-        elif req.mode == "patterns":
-            results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
-        else:
-            results = search(req.query, top_k=5)
-    except Exception as e:
-        logger.error("Retrieval failed: %s", e)
-        raise HTTPException(status_code=502, detail="Search service unavailable.")
-
-    # Step 2: Stream the LLM answer, then append the retrieved chunks
     def stream_response():
-        # For deps mode, send the graph structure first
-        if graph:
+        # Wrap entire pipeline in a single Langfuse trace
+        with get_client().start_as_current_span(
+            name="query",
+            input={"query": req.query, "mode": req.mode},
+        ):
+            get_client().update_current_trace(
+                tags=["legacylens", req.mode],
+            )
+            trace_id = get_client().get_current_trace_id()
+
+            # Step 1: Retrieve relevant code chunks (or dependency graph)
+            graph = None
             try:
-                yield f"data: {json.dumps({'type': 'graph', 'data': graph})}\n\n"
+                if req.mode == "deps":
+                    graph = resolve_dependency_graph(req.query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
+                    results = [
+                        {
+                            "name": name,
+                            "file_path": info.get("file_path", ""),
+                            "start_line": info.get("start_line", 0),
+                            "end_line": info.get("end_line", 0),
+                            "dependencies": ", ".join(info.get("dependencies", [])),
+                            "text": info.get("text", ""),
+                            "score": 1.0,
+                        }
+                        for name, info in graph["nodes"].items()
+                        if info.get("found")
+                    ]
+                elif req.mode == "patterns":
+                    results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
+                else:
+                    results = search(req.query, top_k=5)
             except Exception as e:
-                logger.error("Graph serialization failed: %s", e)
+                logger.error("Retrieval failed: %s", e)
+                yield f"data: {json.dumps({'type': 'error', 'content': 'Search service unavailable.'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        # Stream the generated answer and collect the full text
-        full_answer = []
-        try:
-            gen = generate_deps_stream(req.query, graph) if graph else generate_answer_stream(req.query, results, mode=req.mode)
-            for text_chunk in gen:
-                full_answer.append(text_chunk)
-                yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
-        except Exception as e:
-            logger.error("Generation failed: %s", e)
-            yield f"data: {json.dumps({'type': 'error', 'content': 'Answer generation failed.'})}\n\n"
+            # For deps mode, send the graph structure first
+            if graph:
+                try:
+                    yield f"data: {json.dumps({'type': 'graph', 'data': graph})}\n\n"
+                except Exception as e:
+                    logger.error("Graph serialization failed: %s", e)
 
-        # Then send the retrieved code chunks
-        try:
-            chunks = [
-                {
-                    "name": r["name"],
-                    "file_path": r["file_path"],
-                    "start_line": r["start_line"],
-                    "end_line": r["end_line"],
-                    "dependencies": r["dependencies"],
-                    "score": float(r["score"]),
-                    "text": r["text"][:2000],
-                }
-                for r in results
-            ]
-            sources_json = json.dumps({'type': 'sources', 'chunks': chunks})
-            logger.info("Sources payload: mode=%s, chunks=%d, bytes=%d", req.mode, len(chunks), len(sources_json))
-            yield f"data: {sources_json}\n\n"
-        except Exception as e:
-            logger.error("Source serialization failed: %s", e)
+            # Step 2: Stream the generated answer
+            full_answer = []
+            try:
+                gen = generate_deps_stream(req.query, graph) if graph else generate_answer_stream(req.query, results, mode=req.mode)
+                for text_chunk in gen:
+                    full_answer.append(text_chunk)
+                    yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
+            except Exception as e:
+                logger.error("Generation failed: %s", e)
+                yield f"data: {json.dumps({'type': 'error', 'content': 'Answer generation failed.'})}\n\n"
 
-        # Generate and send follow-up suggestions
-        try:
-            followups = generate_followups(req.query, "".join(full_answer))
-            yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
-        except Exception as e:
-            logger.warning("Follow-up generation failed: %s", e)
+            # Send retrieved code chunks
+            try:
+                chunks = [
+                    {
+                        "name": r["name"],
+                        "file_path": r["file_path"],
+                        "start_line": r["start_line"],
+                        "end_line": r["end_line"],
+                        "dependencies": r["dependencies"],
+                        "score": float(r["score"]),
+                        "text": r["text"][:2000],
+                    }
+                    for r in results
+                ]
+                sources_json = json.dumps({'type': 'sources', 'chunks': chunks})
+                logger.info("Sources payload: mode=%s, chunks=%d, bytes=%d", req.mode, len(chunks), len(sources_json))
+                yield f"data: {sources_json}\n\n"
+            except Exception as e:
+                logger.error("Source serialization failed: %s", e)
 
-        yield "data: [DONE]\n\n"
+            # Generate and send follow-up suggestions
+            try:
+                followups = generate_followups(req.query, "".join(full_answer))
+                yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
+            except Exception as e:
+                logger.warning("Follow-up generation failed: %s", e)
+
+            # Send trace ID so frontend can attach feedback to the right trace
+            if trace_id:
+                yield f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id})}\n\n"
+
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
 
@@ -191,6 +214,18 @@ async def feedback(request: Request):
     except Exception as e:
         logger.error("Failed to write feedback: %s", e)
         raise HTTPException(status_code=500, detail="Failed to store feedback.")
+
+    # Attach feedback as a Langfuse score on the trace
+    if req.trace_id:
+        try:
+            get_client().create_score(
+                trace_id=req.trace_id,
+                name="user_feedback",
+                value=1.0 if req.feedback == "up" else 0.0,
+                comment=req.comment or None,
+            )
+        except Exception as e:
+            logger.warning("Failed to send feedback to Langfuse: %s", e)
 
     return {"status": "ok"}
 
