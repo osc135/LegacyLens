@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from app.retrieval import search
-from app.generation import generate_answer_stream
+from app.generation import generate_answer_stream, generate_followups
 
 app = FastAPI(title="LegacyLens")
 
@@ -36,8 +36,10 @@ async def query(request: Request):
 
     # Step 2: Stream the LLM answer, then append the retrieved chunks
     def stream_response():
-        # First, stream the generated answer
+        # First, stream the generated answer and collect the full text
+        full_answer = []
         for text_chunk in generate_answer_stream(user_query, results):
+            full_answer.append(text_chunk)
             yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
 
         # Then send the retrieved code chunks
@@ -53,6 +55,14 @@ async def query(request: Request):
                 "text": r["text"],
             })
         yield f"data: {json.dumps({'type': 'sources', 'chunks': chunks})}\n\n"
+
+        # Generate and send follow-up suggestions
+        try:
+            followups = generate_followups(user_query, "".join(full_answer))
+            yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
+        except Exception:
+            pass
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
