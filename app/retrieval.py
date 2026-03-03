@@ -1,3 +1,4 @@
+import logging
 from openai import OpenAI
 from pinecone import Pinecone
 from app.config import (
@@ -7,12 +8,18 @@ from app.config import (
     EMBEDDING_MODEL,
     LLM_MODEL,
     TOP_K,
+    FETCH_MULTIPLIER,
+    QUERY_EXPANSION_TEMPERATURE,
 )
+
+logger = logging.getLogger(__name__)
 
 # Initialize clients
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(PINECONE_INDEX_NAME)
+
+EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BLAS/")
 
 
 def expand_query(query: str) -> list[str]:
@@ -20,26 +27,29 @@ def expand_query(query: str) -> list[str]:
     Use GPT-4o-mini to rephrase the user's question into
     3 technical variations that will match LAPACK code better.
     """
-    response = openai_client.chat.completions.create(
-        model=LLM_MODEL,
-        temperature=0.5,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a search query expander for the LAPACK Fortran linear algebra library. "
-                    "Given a user question, generate exactly 3 alternative search queries that would "
-                    "match LAPACK subroutine names, comment headers, and documentation. "
-                    "Use technical Fortran/LAPACK terminology. "
-                    "Return ONLY the 3 queries, one per line, no numbering or extra text."
-                ),
-            },
-            {"role": "user", "content": query},
-        ],
-    )
-    expanded = response.choices[0].message.content.strip().split("\n")
-    # Include the original query too
-    return [query] + [q.strip() for q in expanded if q.strip()]
+    try:
+        response = openai_client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=QUERY_EXPANSION_TEMPERATURE,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a search query expander for the LAPACK Fortran linear algebra library. "
+                        "Given a user question, generate exactly 3 alternative search queries that would "
+                        "match LAPACK subroutine names, comment headers, and documentation. "
+                        "Use technical Fortran/LAPACK terminology. "
+                        "Return ONLY the 3 queries, one per line, no numbering or extra text."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+        )
+        expanded = response.choices[0].message.content.strip().split("\n")
+        return [query] + [q.strip() for q in expanded if q.strip()]
+    except Exception as e:
+        logger.warning("Query expansion failed, using original query: %s", e)
+        return [query]
 
 
 def embed_query(query: str) -> list[float]:
@@ -67,7 +77,7 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[d
     all_results = []
 
     # Over-fetch to compensate for filtering out non-library files
-    fetch_k = top_k * 3
+    fetch_k = top_k * FETCH_MULTIPLIER
 
     for q in queries:
         query_vector = embed_query(q)
@@ -97,7 +107,6 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[d
                         break
 
     # Filter out test files — only keep actual library source code
-    EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BLAS/")
     all_results = [
         r for r in all_results
         if not r["file_path"].startswith(EXCLUDED_PREFIXES)

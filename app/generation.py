@@ -1,5 +1,8 @@
+import logging
 from openai import OpenAI
-from app.config import OPENAI_API_KEY, LLM_MODEL
+from app.config import OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_FOLLOWUP_ANSWER_CHARS
+
+logger = logging.getLogger(__name__)
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -108,7 +111,7 @@ def generate_answer(query: str, results: list[dict], mode: str = "ask") -> str:
 
     response = openai_client.chat.completions.create(
         model=LLM_MODEL,
-        temperature=0.3,
+        temperature=LLM_TEMPERATURE,
         messages=[
             {"role": "system", "content": get_system_prompt(mode)},
             {
@@ -126,7 +129,7 @@ def generate_answer_stream(query: str, results: list[dict], mode: str = "ask"):
 
     stream = openai_client.chat.completions.create(
         model=LLM_MODEL,
-        temperature=0.3,
+        temperature=LLM_TEMPERATURE,
         stream=True,
         messages=[
             {"role": "system", "content": get_system_prompt(mode)},
@@ -159,7 +162,7 @@ def generate_followups(query: str, answer: str) -> list[str]:
             },
             {
                 "role": "user",
-                "content": f"User asked: {query}\n\nAnswer given:\n{answer[:1000]}",
+                "content": f"User asked: {query}\n\nAnswer given:\n{answer[:MAX_FOLLOWUP_ANSWER_CHARS]}",
             },
         ],
     )

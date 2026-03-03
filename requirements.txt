@@ -8,3 +8,4 @@ langchain-pinecone
 fastapi
 uvicorn
 jinja2
+slowapi
