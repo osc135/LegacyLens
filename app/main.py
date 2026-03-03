@@ -27,6 +27,10 @@ async def query(request: Request):
     """
     body = await request.json()
     user_query = body.get("query", "")
+    mode = body.get("mode", "ask")
+
+    if mode not in ("ask", "explain", "docs"):
+        mode = "ask"
 
     if not user_query.strip():
         return {"error": "Empty query"}
@@ -38,7 +42,7 @@ async def query(request: Request):
     def stream_response():
         # First, stream the generated answer and collect the full text
         full_answer = []
-        for text_chunk in generate_answer_stream(user_query, results):
+        for text_chunk in generate_answer_stream(user_query, results, mode=mode):
             full_answer.append(text_chunk)
             yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
 

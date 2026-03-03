@@ -145,6 +145,24 @@
             padding:12px 16px 12px 16px;
         }
 
+        .md table{
+            width:100%;border-collapse:collapse;
+            margin:16px 0;font-size:14px;
+        }
+        .md th,.md td{
+            border:1px solid var(--border-strong);
+            padding:8px 12px;text-align:left;
+            line-height:1.5;
+        }
+        .md th{
+            background:var(--surface);
+            font-weight:600;font-size:12px;
+            text-transform:uppercase;letter-spacing:.03em;
+            color:var(--text-2);
+        }
+        .md tr:nth-child(even){background:var(--bg)}
+        .md tr:hover{background:var(--accent-bg)}
+
         .md hr{border:none;border-top:1px solid var(--border);margin:24px 0}
 
         /* inline code */
@@ -264,6 +282,32 @@
             overflow-wrap:break-word;
             color:var(--code-text);
             background:none;border:none;border-radius:0;
+        }
+
+        /* ═══ MODE TABS ═══ */
+        .mode-tabs{
+            pointer-events:all;
+            max-width:var(--thread-w);margin:0 auto 8px;
+            display:flex;gap:4px;
+        }
+        .mode-tab{
+            padding:6px 14px;
+            font-size:12px;font-weight:500;
+            font-family:'Inter',sans-serif;
+            border:1px solid var(--border);
+            border-radius:20px;
+            background:var(--white);
+            color:var(--text-2);
+            cursor:pointer;
+            transition:all .15s;
+            user-select:none;
+        }
+        .mode-tab:hover{border-color:var(--border-strong);color:var(--text)}
+        .mode-tab.active{
+            background:var(--accent);
+            border-color:var(--accent);
+            color:#fff;
+            font-weight:600;
         }
 
         /* ═══ INPUT ═══ */
@@ -403,16 +447,21 @@
             <h2>What can I help you find?</h2>
             <p>Explore and understand the LAPACK Fortran codebase using natural language</p>
             <div class="examples">
-                <div class="ex" onclick="go(this.textContent)">What does the DGESV subroutine do?</div>
-                <div class="ex" onclick="go(this.textContent)">Find matrix factorization subroutines</div>
-                <div class="ex" onclick="go(this.textContent)">How does error handling work in LAPACK?</div>
-                <div class="ex" onclick="go(this.textContent)">Show me the dependencies of DGETRF</div>
+                <div class="ex" onclick="go('How does DGESV solve a linear system Ax=b?')">How does LAPACK solve Ax = b?</div>
+                <div class="ex" onclick="go('QR factorization in LAPACK')">How does QR factorization work?</div>
+                <div class="ex" onclick="setModeAndGo('explain','DGESV solve linear system Ax=b')">Explain the DGESV linear solver</div>
+                <div class="ex" onclick="setModeAndGo('docs','DGETRF LU factorization subroutine')">Generate docs for DGETRF</div>
             </div>
         </div>
     </div>
 </div>
 
 <div class="input-area">
+    <div class="mode-tabs" id="mode-tabs">
+        <button class="mode-tab active" data-mode="ask">Ask</button>
+        <button class="mode-tab" data-mode="explain">Explain</button>
+        <button class="mode-tab" data-mode="docs">Generate Docs</button>
+    </div>
     <div class="input-box">
         <textarea id="input" rows="1" placeholder="Ask about LAPACK code..." autofocus></textarea>
         <button class="send" id="send-btn" aria-label="Send">
@@ -445,6 +494,19 @@ const thread=document.getElementById('thread');
 const chatEl=document.getElementById('chat');
 const welcome=document.getElementById('welcome');
 let sc=0;
+let currentMode='ask';
+
+/* ── Mode tabs ── */
+const modeTabs=document.getElementById('mode-tabs');
+const placeholders={ask:'Ask about LAPACK code...',explain:'Enter a subroutine name to explain...',docs:'Enter a subroutine name to generate docs...'};
+modeTabs.addEventListener('click',e=>{
+    const tab=e.target.closest('.mode-tab');if(!tab)return;
+    modeTabs.querySelectorAll('.mode-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    currentMode=tab.dataset.mode;
+    input.placeholder=placeholders[currentMode]||placeholders.ask;
+    input.focus();
+});
 
 function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function bottom(){chatEl.scrollTop=chatEl.scrollHeight}
@@ -454,18 +516,29 @@ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventD
 sendBtn.addEventListener('click',e=>{e.preventDefault();submit()});
 
 function go(t){input.value=t;submit()}
+function setModeAndGo(mode,q){
+    currentMode=mode;
+    modeTabs.querySelectorAll('.mode-tab').forEach(t=>{
+        t.classList.toggle('active',t.dataset.mode===mode);
+    });
+    input.placeholder=placeholders[mode]||placeholders.ask;
+    input.value=q;submit();
+}
 function submit(){
     const q=input.value.trim();if(!q||sendBtn.disabled)return;
-    input.value='';input.style.height='auto';sendBtn.disabled=true;doQuery(q);
+    input.value='';input.style.height='auto';sendBtn.disabled=true;doQuery(q,currentMode);
 }
 
-function doQuery(q){
+function doQuery(q,mode){
+    mode=mode||currentMode;
     welcome.style.display='none';
+    const modeLabels={ask:'',explain:' · Explain',docs:' · Docs'};
+    const hints={ask:'Searching codebase',explain:'Analyzing code',docs:'Generating documentation'};
     const turn=document.createElement('div');
     turn.className='turn';
     turn.innerHTML=`
         <div class="t-u">
-            <div class="t-u-label">You</div>
+            <div class="t-u-label">You${modeLabels[mode]||''}</div>
             <div class="t-u-text">${esc(q)}</div>
         </div>
         <div class="t-a" id="cur-block">
@@ -475,7 +548,7 @@ function doQuery(q){
                     <div class="ldr-bar"></div>
                     <div class="ldr-bar"></div>
                     <div class="ldr-bar"></div>
-                    <div class="ldr-hint">Searching codebase</div>
+                    <div class="ldr-hint">${hints[mode]||hints.ask}</div>
                 </div>
             </div>
         </div>
@@ -483,15 +556,15 @@ function doQuery(q){
     thread.appendChild(turn);bottom();
     const mdEl=document.getElementById('cur-md');
     const block=document.getElementById('cur-block');
-    doStream(q,mdEl,block);
+    doStream(q,mdEl,block,mode);
 }
 
-async function doStream(q,mdEl,block){
+async function doStream(q,mdEl,block,mode){
     let raw='';
     try{
         const res=await fetch('/query',{
             method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({query:q}),
+            body:JSON.stringify({query:q,mode:mode||'ask'}),
         });
         const reader=res.body.getReader();
         const dec=new TextDecoder();let buf='';
@@ -597,7 +670,10 @@ function addFollowups(container,questions){
         const chip=document.createElement('div');
         chip.className='followup';
         chip.textContent=q;
-        chip.addEventListener('click',()=>{input.value=q;submit()});
+        chip.addEventListener('click',()=>{
+            if(sendBtn.disabled)return;
+            sendBtn.disabled=true;doQuery(q,'ask');
+        });
         div.appendChild(chip);
     });
     container.appendChild(div);

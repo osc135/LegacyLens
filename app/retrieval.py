@@ -66,11 +66,14 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[d
     seen_ids = set()
     all_results = []
 
+    # Over-fetch to compensate for filtering out non-library files
+    fetch_k = top_k * 3
+
     for q in queries:
         query_vector = embed_query(q)
         results = index.query(
             vector=query_vector,
-            top_k=top_k,
+            top_k=fetch_k,
             include_metadata=True,
         )
 
@@ -92,6 +95,13 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[d
                     if r["name"] == match.metadata.get("name", ""):
                         r["score"] = max(r["score"], match.score)
                         break
+
+    # Filter out test files — only keep actual library source code
+    EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BLAS/")
+    all_results = [
+        r for r in all_results
+        if not r["file_path"].startswith(EXCLUDED_PREFIXES)
+    ]
 
     # Sort by score (best first) and return top_k
     all_results.sort(key=lambda x: x["score"], reverse=True)
