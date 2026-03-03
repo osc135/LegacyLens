@@ -52,6 +52,38 @@ def expand_query(query: str) -> list[str]:
         return [query]
 
 
+def describe_code_for_search(code: str) -> list[str]:
+    """
+    Given a Fortran code snippet, generate natural language descriptions
+    that will match LAPACK library source files when embedded.
+    """
+    try:
+        response = openai_client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=QUERY_EXPANSION_TEMPERATURE,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert on the LAPACK Fortran library. "
+                        "Given a Fortran code snippet, describe what it does in 3 different ways "
+                        "that would match LAPACK subroutine source code, comment headers, and documentation. "
+                        "Focus on the pattern (e.g. 'input argument validation with XERBLA', "
+                        "'LU factorization with partial pivoting', 'workspace query for optimal LWORK'). "
+                        "Include specific LAPACK subroutine names if you can identify them. "
+                        "Return ONLY the 3 descriptions, one per line, no numbering or extra text."
+                    ),
+                },
+                {"role": "user", "content": code},
+            ],
+        )
+        descriptions = response.choices[0].message.content.strip().split("\n")
+        return [q.strip() for q in descriptions if q.strip()]
+    except Exception as e:
+        logger.warning("Code description failed, using raw code: %s", e)
+        return [code]
+
+
 def embed_query(query: str) -> list[float]:
     """Turn a user's question into a vector."""
     response = openai_client.embeddings.create(
@@ -61,13 +93,16 @@ def embed_query(query: str) -> list[float]:
     return response.data[0].embedding
 
 
-def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[dict]:
+def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_search: bool = False, fetch_multiplier: int = FETCH_MULTIPLIER) -> list[dict]:
     """
     Search Pinecone for code chunks that match the query.
     Uses query expansion to improve results by default.
+    When code_search=True, describes the code snippet as natural language first.
     Returns a list of results with metadata and similarity scores.
     """
-    if use_expansion:
+    if code_search:
+        queries = describe_code_for_search(query)
+    elif use_expansion:
         queries = expand_query(query)
     else:
         queries = [query]
@@ -77,7 +112,7 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True) -> list[d
     all_results = []
 
     # Over-fetch to compensate for filtering out non-library files
-    fetch_k = top_k * FETCH_MULTIPLIER
+    fetch_k = top_k * fetch_multiplier
 
     for q in queries:
         query_vector = embed_query(q)

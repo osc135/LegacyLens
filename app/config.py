@@ -37,7 +37,8 @@ MIN_EMBEDDING_TOKENS = 50
 
 # Query validation
 MAX_QUERY_LENGTH = 2000
-VALID_MODES = ("ask", "explain", "docs")
+VALID_MODES = ("ask", "explain", "docs", "patterns")
+PATTERNS_TOP_K = 5
 
 # Paths
 LAPACK_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "lapack")

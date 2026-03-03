@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-CITATION_RULES = """- You are given numbered sources [Source 1] through [Source 5]. IMPORTANT: When you use information from a source, you MUST cite it inline using ONLY the numbers [1], [2], [3], [4], or [5] — matching the source number. Place the citation immediately after the sentence that uses that source's information. Every claim from a source needs a citation. Do NOT use any other numbers. Example: "The `DGESV` subroutine solves general linear systems [1]. It uses LU factorization with partial pivoting [2].\""""
+CITATION_RULES = """- You are given numbered sources [Source 1] through [Source N]. IMPORTANT: When you use information from a source, you MUST cite it inline using the bracketed number matching the source (e.g. [1], [2], [3]). Place the citation immediately after the sentence that uses that source's information. Every claim from a source needs a citation. Example: "The `DGESV` subroutine solves general linear systems [1]. It uses LU factorization with partial pivoting [2].\""""
 
 SYSTEM_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library.
 
@@ -82,10 +82,38 @@ Rules:
 - If info is not available in the sources, omit that section rather than guessing."""
 
 
+PATTERNS_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to find and explain code patterns.
+
+The user has pasted a code snippet. You are given similar code chunks retrieved from the LAPACK codebase. Analyze them and respond with:
+
+## Snippet Analysis
+Briefly describe what the pasted code snippet does.
+
+## Similar Code Found
+For each retrieved chunk that is meaningfully similar, explain what it does and how it relates to the snippet.
+
+## Common Patterns
+Highlight shared patterns across the snippet and retrieved code:
+- Naming conventions (e.g., prefix conventions like D/S/Z/C)
+- Structural patterns (e.g., argument checking, workspace queries, algorithm flow)
+- Error handling (e.g., INFO parameter usage)
+- Algorithm patterns (e.g., blocking, recursion, factorization steps)
+
+## Notable Differences
+Point out meaningful differences between the snippet and the retrieved code — different algorithms, optimizations, or edge-case handling.
+
+Rules:
+- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists.
+{CITATION_RULES}
+- Wrap all Fortran identifiers in backticks.
+- Focus on patterns that help the user understand LAPACK's design philosophy.
+- If the retrieved code is not related to the snippet, say so clearly."""
+
 PROMPTS = {
     "ask": SYSTEM_PROMPT,
     "explain": EXPLAIN_PROMPT,
     "docs": DOCS_PROMPT,
+    "patterns": PATTERNS_PROMPT,
 }
 
 
@@ -105,6 +133,13 @@ def build_context(results: list[dict]) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
+def _build_user_message(query: str, context: str, mode: str) -> str:
+    """Build the user message, labeling input appropriately for the mode."""
+    if mode == "patterns":
+        return f"Code snippet:\n```\n{query}\n```\n\nSimilar code from LAPACK:\n\n{context}"
+    return f"Question: {query}\n\nRelevant code from LAPACK:\n\n{context}"
+
+
 def generate_answer(query: str, results: list[dict], mode: str = "ask") -> str:
     """Generate a complete answer (non-streaming) from retrieved code chunks."""
     context = build_context(results)
@@ -114,10 +149,7 @@ def generate_answer(query: str, results: list[dict], mode: str = "ask") -> str:
         temperature=LLM_TEMPERATURE,
         messages=[
             {"role": "system", "content": get_system_prompt(mode)},
-            {
-                "role": "user",
-                "content": f"Question: {query}\n\nRelevant code from LAPACK:\n\n{context}",
-            },
+            {"role": "user", "content": _build_user_message(query, context, mode)},
         ],
     )
     return response.choices[0].message.content
@@ -133,10 +165,7 @@ def generate_answer_stream(query: str, results: list[dict], mode: str = "ask"):
         stream=True,
         messages=[
             {"role": "system", "content": get_system_prompt(mode)},
-            {
-                "role": "user",
-                "content": f"Question: {query}\n\nRelevant code from LAPACK:\n\n{context}",
-            },
+            {"role": "user", "content": _build_user_message(query, context, mode)},
         ],
     )
 

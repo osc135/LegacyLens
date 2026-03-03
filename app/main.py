@@ -8,7 +8,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from app.config import MAX_QUERY_LENGTH, VALID_MODES
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K
 from app.retrieval import search
 from app.generation import generate_answer_stream, generate_followups
 
@@ -65,7 +65,10 @@ async def query(request: Request):
 
     # Step 1: Retrieve relevant code chunks
     try:
-        results = search(req.query, top_k=5)
+        if req.mode == "patterns":
+            results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
+        else:
+            results = search(req.query, top_k=5)
     except Exception as e:
         logger.error("Retrieval failed: %s", e)
         raise HTTPException(status_code=502, detail="Search service unavailable.")
@@ -83,19 +86,24 @@ async def query(request: Request):
             yield f"data: {json.dumps({'type': 'error', 'content': 'Answer generation failed.'})}\n\n"
 
         # Then send the retrieved code chunks
-        chunks = [
-            {
-                "name": r["name"],
-                "file_path": r["file_path"],
-                "start_line": r["start_line"],
-                "end_line": r["end_line"],
-                "dependencies": r["dependencies"],
-                "score": r["score"],
-                "text": r["text"],
-            }
-            for r in results
-        ]
-        yield f"data: {json.dumps({'type': 'sources', 'chunks': chunks})}\n\n"
+        try:
+            chunks = [
+                {
+                    "name": r["name"],
+                    "file_path": r["file_path"],
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "dependencies": r["dependencies"],
+                    "score": float(r["score"]),
+                    "text": r["text"][:2000],
+                }
+                for r in results
+            ]
+            sources_json = json.dumps({'type': 'sources', 'chunks': chunks})
+            logger.info("Sources payload: mode=%s, chunks=%d, bytes=%d", req.mode, len(chunks), len(sources_json))
+            yield f"data: {sources_json}\n\n"
+        except Exception as e:
+            logger.error("Source serialization failed: %s", e)
 
         # Generate and send follow-up suggestions
         try:
