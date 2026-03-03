@@ -37,7 +37,9 @@ MIN_EMBEDDING_TOKENS = 50
 
 # Query validation
 MAX_QUERY_LENGTH = 2000
-VALID_MODES = ("ask", "explain", "docs", "patterns")
+VALID_MODES = ("ask", "explain", "docs", "patterns", "deps")
+DEPS_MAX_DEPTH = 2
+DEPS_MAX_NODES = 30
 PATTERNS_TOP_K = 5
 
 # Paths

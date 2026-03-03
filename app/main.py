@@ -8,9 +8,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K
-from app.retrieval import search
-from app.generation import generate_answer_stream, generate_followups
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES
+from app.retrieval import search, resolve_dependency_graph
+from app.generation import generate_answer_stream, generate_followups, generate_deps_stream
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,26 @@ async def query(request: Request):
         logger.warning("Invalid request: %s", e)
         raise HTTPException(status_code=400, detail="Invalid request. Provide a 'query' string.")
 
-    # Step 1: Retrieve relevant code chunks
+    # Step 1: Retrieve relevant code chunks (or dependency graph)
+    graph = None
     try:
-        if req.mode == "patterns":
+        if req.mode == "deps":
+            graph = resolve_dependency_graph(req.query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
+            # Build results from found graph nodes for source cards
+            results = [
+                {
+                    "name": name,
+                    "file_path": info.get("file_path", ""),
+                    "start_line": info.get("start_line", 0),
+                    "end_line": info.get("end_line", 0),
+                    "dependencies": ", ".join(info.get("dependencies", [])),
+                    "text": info.get("text", ""),
+                    "score": 1.0,
+                }
+                for name, info in graph["nodes"].items()
+                if info.get("found")
+            ]
+        elif req.mode == "patterns":
             results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
         else:
             results = search(req.query, top_k=5)
@@ -75,10 +92,18 @@ async def query(request: Request):
 
     # Step 2: Stream the LLM answer, then append the retrieved chunks
     def stream_response():
-        # First, stream the generated answer and collect the full text
+        # For deps mode, send the graph structure first
+        if graph:
+            try:
+                yield f"data: {json.dumps({'type': 'graph', 'data': graph})}\n\n"
+            except Exception as e:
+                logger.error("Graph serialization failed: %s", e)
+
+        # Stream the generated answer and collect the full text
         full_answer = []
         try:
-            for text_chunk in generate_answer_stream(req.query, results, mode=req.mode):
+            gen = generate_deps_stream(req.query, graph) if graph else generate_answer_stream(req.query, results, mode=req.mode)
+            for text_chunk in gen:
                 full_answer.append(text_chunk)
                 yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
         except Exception as e:

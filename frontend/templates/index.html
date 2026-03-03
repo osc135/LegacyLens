@@ -7,6 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:false,theme:'dark',themeVariables:{primaryColor:'#7c6aef',primaryTextColor:'#e8e8ef',primaryBorderColor:'#4f8efa',lineColor:'#8a8a9a',secondaryColor:'#1a1a2e',tertiaryColor:'#0e0e16'}});</script>
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -528,6 +530,43 @@
         }
         .theme-btn:hover{background:var(--glass-strong);border-color:var(--glass-border-strong)}
         .theme-btn svg{width:16px;height:16px;color:var(--text-2)}
+
+        /* ═══ DEP GRAPH ═══ */
+        .dep-graph{
+            background:var(--glass);
+            border:1px solid var(--glass-border);
+            border-radius:12px;
+            padding:18px 20px;
+            margin-bottom:20px;
+            font-family:'JetBrains Mono',monospace;
+            font-size:13px;line-height:1.8;
+            overflow-x:auto;
+        }
+        .dep-graph-title{
+            font-size:11px;font-weight:600;text-transform:uppercase;
+            letter-spacing:.06em;color:var(--text-3);margin-bottom:10px;
+        }
+        .graph-node{white-space:nowrap}
+        .graph-name{color:var(--accent-2);font-weight:600}
+        .graph-name.external{color:var(--text-3);font-style:italic}
+        .graph-tag{
+            font-size:10px;padding:1px 6px;border-radius:4px;
+            margin-left:6px;vertical-align:middle;
+        }
+        .graph-tag.found{background:var(--green-bg);color:var(--green-text);border:1px solid var(--green-border)}
+        .graph-tag.ext{background:var(--glass-strong);color:var(--text-3);border:1px solid var(--glass-border)}
+
+        /* Mermaid diagram container */
+        .md .mermaid-container{
+            background:var(--glass);
+            border:1px solid var(--glass-border);
+            border-radius:12px;
+            padding:20px;
+            margin:18px 0;
+            overflow-x:auto;
+            text-align:center;
+        }
+        .md .mermaid-container svg{max-width:100%;height:auto}
     </style>
 </head>
 <body>
@@ -587,6 +626,11 @@
                     <span class="ex-label">Generate docs for DGETRF</span>
                     <span class="ex-hint">Docs mode</span>
                 </div>
+                <div class="ex" onclick="setModeAndGo('deps','DGESV')">
+                    <span class="ex-icon">&#128279;</span>
+                    <span class="ex-label">Map DGESV dependencies</span>
+                    <span class="ex-hint">Dep Map mode</span>
+                </div>
             </div>
         </div>
     </div>
@@ -598,6 +642,7 @@
         <button class="mode-tab" data-mode="explain">Explain</button>
         <button class="mode-tab" data-mode="docs">Generate Docs</button>
         <button class="mode-tab" data-mode="patterns">Find Patterns</button>
+        <button class="mode-tab" data-mode="deps">Dep Map</button>
     </div>
     <div class="input-box">
         <textarea id="input" rows="1" placeholder="Ask about LAPACK code..." autofocus></textarea>
@@ -693,7 +738,7 @@ let currentMode='ask';
 
 /* ── Mode tabs ── */
 const modeTabs=document.getElementById('mode-tabs');
-const placeholders={ask:'Ask about LAPACK code...',explain:'Enter a subroutine name to explain...',docs:'Enter a subroutine name to generate docs...',patterns:'Paste a code snippet to find similar patterns across LAPACK...'};
+const placeholders={ask:'Ask about LAPACK code...',explain:'Enter a subroutine name to explain...',docs:'Enter a subroutine name to generate docs...',patterns:'Paste a code snippet to find similar patterns across LAPACK...',deps:'Enter a subroutine name (e.g. DGESV)...'};
 modeTabs.addEventListener('click',e=>{
     const tab=e.target.closest('.mode-tab');if(!tab)return;
     modeTabs.querySelectorAll('.mode-tab').forEach(t=>t.classList.remove('active'));
@@ -729,8 +774,8 @@ function submit(){
 function doQuery(q,mode){
     mode=mode||currentMode;
     welcome.style.display='none';
-    const modeLabels={ask:'',explain:' · Explain',docs:' · Docs',patterns:' · Patterns'};
-    const hints={ask:'Searching codebase',explain:'Analyzing code',docs:'Generating documentation',patterns:'Finding similar patterns'};
+    const modeLabels={ask:'',explain:' · Explain',docs:' · Docs',patterns:' · Patterns',deps:' · Dep Map'};
+    const hints={ask:'Searching codebase',explain:'Analyzing code',docs:'Generating documentation',patterns:'Finding similar patterns',deps:'Resolving dependencies'};
     const turn=document.createElement('div');
     turn.className='turn';
     turn.innerHTML=`
@@ -775,13 +820,14 @@ async function doStream(q,mdEl,block,mode){
                 const d=dataLine.slice(6);if(d==='[DONE]')continue;
                 try{
                     const p=JSON.parse(d);
-                    if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
-                    else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);addSrc(block,p.chunks);bottom()}
+                    if(p.type==='graph'){addGraph(block,p.data);bottom()}
+                    else if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
+                    else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);addSrc(block,p.chunks);bottom()}
                     else if(p.type==='followups'){addFollowups(block,p.questions);bottom()}
                 }catch(err){console.error('SSE parse error:',err,d)}
             }
         }
-        mdEl.removeAttribute('id');renderMd(mdEl,raw,false);
+        mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);
     }catch(err){
         const l=document.getElementById('ldr');if(l)l.remove();
         mdEl.innerHTML='<p style="color:var(--red-text)">Something went wrong. Please try again.</p>';
@@ -852,6 +898,59 @@ function addSrc(container,chunks){
         <div class="src-header">Sources</div>
         <div class="src-list">${cards}</div>`;
     container.appendChild(div);
+}
+
+function addGraph(container,graph){
+    if(!graph||!graph.nodes)return;
+    const div=document.createElement('div');
+    div.className='dep-graph';
+    let html='<div class="dep-graph-title">Call Graph</div>';
+
+    // Build tree from edges
+    function buildTree(name,depth,visited){
+        if(depth>4)return '';
+        visited=visited||new Set();
+        if(visited.has(name))return '';
+        visited.add(name);
+        const node=graph.nodes[name];
+        const found=node&&node.found;
+        const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(depth);
+        const prefix=depth>0?'└─ ':'';
+        const cls=found?'graph-name':'graph-name external';
+        const tag=found?'<span class="graph-tag found">found</span>':'<span class="graph-tag ext">external</span>';
+        let line=`<div class="graph-node">${indent}${prefix}<span class="${cls}">${esc(name)}</span>${tag}</div>`;
+
+        // Find children of this node
+        const children=graph.edges.filter(e=>e[0]===name).map(e=>e[1]);
+        for(const child of children){
+            line+=buildTree(child,depth+1,visited);
+        }
+        return line;
+    }
+
+    html+=buildTree(graph.root,0);
+    div.innerHTML=html;
+    // Insert before the markdown area
+    const mdEl=container.querySelector('.md');
+    if(mdEl)container.insertBefore(div,mdEl);
+    else container.appendChild(div);
+}
+
+function renderMermaid(el){
+    const codeBlocks=el.querySelectorAll('pre code.language-mermaid');
+    codeBlocks.forEach((block,i)=>{
+        const pre=block.parentElement;
+        const container=document.createElement('div');
+        container.className='mermaid-container';
+        const mermaidDiv=document.createElement('div');
+        mermaidDiv.className='mermaid';
+        mermaidDiv.textContent=block.textContent;
+        container.appendChild(mermaidDiv);
+        pre.replaceWith(container);
+    });
+    if(codeBlocks.length>0){
+        try{mermaid.run({querySelector:'.mermaid'})}catch(e){console.warn('Mermaid render error:',e)}
+    }
 }
 
 function addFollowups(container,questions){

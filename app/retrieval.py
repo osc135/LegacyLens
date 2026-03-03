@@ -1,6 +1,7 @@
 import logging
 from openai import OpenAI
 from pinecone import Pinecone
+from collections import deque
 from app.config import (
     OPENAI_API_KEY,
     PINECONE_API_KEY,
@@ -10,6 +11,8 @@ from app.config import (
     TOP_K,
     FETCH_MULTIPLIER,
     QUERY_EXPANSION_TEMPERATURE,
+    DEPS_MAX_DEPTH,
+    DEPS_MAX_NODES,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,3 +153,109 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
     # Sort by score (best first) and return top_k
     all_results.sort(key=lambda x: x["score"], reverse=True)
     return all_results[:top_k]
+
+
+def search_by_name(name: str) -> dict | None:
+    """
+    Find a subroutine by exact name using Pinecone metadata filter.
+    Handles _PART suffixes by trying a prefix match as fallback.
+    Returns a single result dict or None.
+    """
+    name_upper = name.strip().upper()
+
+    # Try exact match first
+    try:
+        # We need a vector for Pinecone query even with metadata filter,
+        # so embed the name itself
+        query_vector = embed_query(name_upper)
+        results = index.query(
+            vector=query_vector,
+            top_k=1,
+            include_metadata=True,
+            filter={"name": {"$eq": name_upper}},
+        )
+        if results.matches:
+            m = results.matches[0]
+            return {
+                "name": m.metadata.get("name", ""),
+                "file_path": m.metadata.get("file_path", ""),
+                "start_line": m.metadata.get("start_line", 0),
+                "end_line": m.metadata.get("end_line", 0),
+                "dependencies": m.metadata.get("dependencies", ""),
+                "text": m.metadata.get("text", ""),
+                "score": m.score,
+            }
+    except Exception as e:
+        logger.warning("Exact name search failed for %s: %s", name_upper, e)
+
+    # Fallback: try _PART1 suffix (chunked subroutines)
+    try:
+        query_vector = embed_query(name_upper)
+        results = index.query(
+            vector=query_vector,
+            top_k=5,
+            include_metadata=True,
+            filter={"name": {"$eq": f"{name_upper}_PART1"}},
+        )
+        if results.matches:
+            m = results.matches[0]
+            return {
+                "name": name_upper,
+                "file_path": m.metadata.get("file_path", ""),
+                "start_line": m.metadata.get("start_line", 0),
+                "end_line": m.metadata.get("end_line", 0),
+                "dependencies": m.metadata.get("dependencies", ""),
+                "text": m.metadata.get("text", ""),
+                "score": m.score,
+            }
+    except Exception as e:
+        logger.warning("Part-suffix search failed for %s: %s", name_upper, e)
+
+    return None
+
+
+def resolve_dependency_graph(
+    root_name: str,
+    max_depth: int = DEPS_MAX_DEPTH,
+    max_nodes: int = DEPS_MAX_NODES,
+) -> dict:
+    """
+    BFS traversal of subroutine dependencies.
+    Returns {"root": str, "nodes": {name: {found, file_path, dependencies, text}}, "edges": [[from, to], ...]}.
+    """
+    root_name = root_name.strip().upper()
+    nodes = {}
+    edges = []
+    visited = set()
+    queue = deque()  # (name, depth)
+
+    queue.append((root_name, 0))
+
+    while queue and len(nodes) < max_nodes:
+        name, depth = queue.popleft()
+        if name in visited:
+            continue
+        visited.add(name)
+
+        result = search_by_name(name)
+        if result:
+            deps_str = result["dependencies"]
+            dep_list = [d.strip() for d in deps_str.split(",") if d.strip()] if deps_str else []
+            nodes[name] = {
+                "found": True,
+                "file_path": result["file_path"],
+                "dependencies": dep_list,
+                "text": result["text"][:2000],
+                "start_line": result["start_line"],
+                "end_line": result["end_line"],
+            }
+            for dep in dep_list:
+                if dep == name:
+                    continue  # skip self-referencing (recursive) calls
+                edges.append([name, dep])
+                if depth < max_depth and dep not in visited and len(nodes) < max_nodes:
+                    queue.append((dep, depth + 1))
+        else:
+            nodes[name] = {"found": False}
+
+    return {"root": root_name, "nodes": nodes, "edges": edges}

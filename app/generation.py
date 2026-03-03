@@ -109,11 +109,43 @@ Rules:
 - Focus on patterns that help the user understand LAPACK's design philosophy.
 - If the retrieved code is not related to the snippet, say so clearly."""
 
+DEPS_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to visualize and explain subroutine dependency chains.
+
+Given a dependency graph and the source code of each resolved subroutine, respond with:
+
+## Call Graph
+
+```mermaid
+graph TD
+    A[ROOT] --> B[DEP1]
+    A --> C[DEP2]
+    B --> D[DEP3]
+```
+
+(Generate a Mermaid `graph TD` flowchart showing the full call graph. Use the actual subroutine names. Mark external/unresolved routines with `:::external` class.)
+
+## Overview
+A 2-3 sentence summary of what the root subroutine does and how its dependencies fit together.
+
+## Subroutine Roles
+For each node in the graph, one bullet describing its role in the call chain.
+
+## Data Flow
+Describe how data flows through the call chain — what the root passes to its callees and what they return.
+
+Rules:
+- Use markdown: ## headings, **bold**, `inline code`, ```mermaid code blocks, and bullet lists.
+{CITATION_RULES}
+- Wrap all Fortran identifiers in backticks.
+- Keep the Mermaid diagram clean — no duplicate edges, use short labels.
+- If a dependency was not found in the codebase, note it as an external routine (e.g., BLAS)."""
+
 PROMPTS = {
     "ask": SYSTEM_PROMPT,
     "explain": EXPLAIN_PROMPT,
     "docs": DOCS_PROMPT,
     "patterns": PATTERNS_PROMPT,
+    "deps": DEPS_PROMPT,
 }
 
 
@@ -133,10 +165,35 @@ def build_context(results: list[dict]) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
+def build_deps_context(graph: dict) -> str:
+    """Format a dependency graph into numbered context for the LLM."""
+    parts = []
+    parts.append(f"Dependency graph for {graph['root']}:")
+    parts.append(f"Edges: {graph['edges']}")
+    parts.append("")
+
+    source_num = 1
+    for name, info in graph["nodes"].items():
+        if info.get("found"):
+            header = f"[Source {source_num}] {info.get('file_path', '')}:lines {info.get('start_line', 0)}-{info.get('end_line', 0)} — {name}"
+            deps = info.get("dependencies", [])
+            if deps:
+                header += f" (calls: {', '.join(deps)})"
+            parts.append(f"{header}\n{info.get('text', '')}")
+            parts.append("---")
+            source_num += 1
+        else:
+            parts.append(f"[{name}] — external routine (not found in codebase)")
+
+    return "\n\n".join(parts)
+
+
 def _build_user_message(query: str, context: str, mode: str) -> str:
     """Build the user message, labeling input appropriately for the mode."""
     if mode == "patterns":
         return f"Code snippet:\n```\n{query}\n```\n\nSimilar code from LAPACK:\n\n{context}"
+    if mode == "deps":
+        return f"Subroutine: {query}\n\n{context}"
     return f"Question: {query}\n\nRelevant code from LAPACK:\n\n{context}"
 
 
@@ -166,6 +223,25 @@ def generate_answer_stream(query: str, results: list[dict], mode: str = "ask"):
         messages=[
             {"role": "system", "content": get_system_prompt(mode)},
             {"role": "user", "content": _build_user_message(query, context, mode)},
+        ],
+    )
+
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def generate_deps_stream(query: str, graph: dict):
+    """Generate a streaming answer for dependency mapping mode. Yields text chunks."""
+    context = build_deps_context(graph)
+
+    stream = openai_client.chat.completions.create(
+        model=LLM_MODEL,
+        temperature=LLM_TEMPERATURE,
+        stream=True,
+        messages=[
+            {"role": "system", "content": get_system_prompt("deps")},
+            {"role": "user", "content": _build_user_message(query, context, "deps")},
         ],
     )
 
