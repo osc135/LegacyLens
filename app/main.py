@@ -172,18 +172,18 @@ async def query(request: Request):
             except Exception as e:
                 logger.error("Source serialization failed: %s", e)
 
-            # Generate and send follow-up suggestions
-            try:
-                followups = generate_followups(req.query, "".join(full_answer))
-                yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
-            except Exception as e:
-                logger.warning("Follow-up generation failed: %s", e)
-
             # Send trace ID so frontend can attach feedback to the right trace
             if trace_id:
                 yield f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id})}\n\n"
 
             yield "data: [DONE]\n\n"
+
+            # Generate follow-up suggestions after [DONE] (non-blocking)
+            try:
+                followups = generate_followups(req.query, "".join(full_answer))
+                yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
+            except Exception as e:
+                logger.warning("Follow-up generation failed: %s", e)
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
 

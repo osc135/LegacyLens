@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from langfuse.openai import OpenAI
 from pinecone import Pinecone
 from collections import deque
@@ -23,6 +24,9 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(PINECONE_INDEX_NAME)
 
 EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BLAS/")
+
+# Reuse a single thread pool across requests to avoid creation overhead
+_executor = ThreadPoolExecutor(max_workers=6)
 
 
 def expand_query(query: str) -> list[str]:
@@ -87,62 +91,93 @@ def describe_code_for_search(code: str) -> list[str]:
         return [code]
 
 
-def embed_query(query: str) -> list[float]:
-    """Turn a user's question into a vector."""
+def embed_queries(queries: list[str]) -> list[list[float]]:
+    """Embed multiple queries in a single API call."""
     response = openai_client.embeddings.create(
         model=EMBEDDING_MODEL,
-        input=query,
+        input=queries,
     )
-    return response.data[0].embedding
+    return [item.embedding for item in response.data]
+
+
+def embed_query(query: str) -> list[float]:
+    """Turn a single query into a vector."""
+    return embed_queries([query])[0]
+
+
+def _pinecone_query(vector: list[float], fetch_k: int) -> list:
+    """Run a single Pinecone query and return matches."""
+    return index.query(vector=vector, top_k=fetch_k, include_metadata=True).matches
+
+
+def _collect_matches(all_matches: list, seen_ids: set, all_results: list):
+    """Deduplicate and collect Pinecone matches into results list."""
+    for match in all_matches:
+        if match.id not in seen_ids:
+            seen_ids.add(match.id)
+            all_results.append({
+                "name": match.metadata.get("name", ""),
+                "file_path": match.metadata.get("file_path", ""),
+                "start_line": match.metadata.get("start_line", 0),
+                "end_line": match.metadata.get("end_line", 0),
+                "dependencies": match.metadata.get("dependencies", ""),
+                "text": match.metadata.get("text", ""),
+                "score": match.score,
+            })
+        else:
+            for r in all_results:
+                if r["name"] == match.metadata.get("name", ""):
+                    r["score"] = max(r["score"], match.score)
+                    break
 
 
 def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_search: bool = False, fetch_multiplier: int = FETCH_MULTIPLIER) -> list[dict]:
     """
     Search Pinecone for code chunks that match the query.
-    Uses query expansion to improve results by default.
-    When code_search=True, describes the code snippet as natural language first.
+    Uses query expansion and parallel execution for speed.
     Returns a list of results with metadata and similarity scores.
     """
-    if code_search:
-        queries = describe_code_for_search(query)
-    elif use_expansion:
-        queries = expand_query(query)
-    else:
-        queries = [query]
-
-    # Search with each query variation and collect all results
+    fetch_k = top_k * fetch_multiplier
     seen_ids = set()
     all_results = []
 
-    # Over-fetch to compensate for filtering out non-library files
-    fetch_k = top_k * fetch_multiplier
+    # Phase 1: Fire expansion AND original query embedding concurrently
+    if code_search:
+        expansion_future = _executor.submit(describe_code_for_search, query)
+    elif use_expansion:
+        expansion_future = _executor.submit(expand_query, query)
+    else:
+        expansion_future = None
 
-    for q in queries:
-        query_vector = embed_query(q)
-        results = index.query(
-            vector=query_vector,
-            top_k=fetch_k,
-            include_metadata=True,
-        )
+    original_embed_future = _executor.submit(embed_queries, [query])
 
-        for match in results.matches:
-            if match.id not in seen_ids:
-                seen_ids.add(match.id)
-                all_results.append({
-                    "name": match.metadata.get("name", ""),
-                    "file_path": match.metadata.get("file_path", ""),
-                    "start_line": match.metadata.get("start_line", 0),
-                    "end_line": match.metadata.get("end_line", 0),
-                    "dependencies": match.metadata.get("dependencies", ""),
-                    "text": match.metadata.get("text", ""),
-                    "score": match.score,
-                })
-            else:
-                # If we've seen this result before, keep the higher score
-                for r in all_results:
-                    if r["name"] == match.metadata.get("name", ""):
-                        r["score"] = max(r["score"], match.score)
-                        break
+    # Phase 2: As soon as original embedding is ready, search Pinecone
+    original_vector = original_embed_future.result()[0]
+    original_search_future = _executor.submit(_pinecone_query, original_vector, fetch_k)
+
+    # Phase 3: When expansion is ready, batch-embed expanded queries (as future)
+    expanded_search_futures = []
+    if expansion_future is not None:
+        expanded_queries = expansion_future.result()
+        extra_queries = [q for q in expanded_queries if q != query]
+
+        if extra_queries:
+            # Submit batch embedding as a future so original Pinecone can finish in parallel
+            expanded_embed_future = _executor.submit(embed_queries, extra_queries)
+            expanded_vectors = expanded_embed_future.result()
+
+            # Phase 4: Fire all expanded Pinecone queries in parallel
+            expanded_search_futures = [
+                _executor.submit(_pinecone_query, vec, fetch_k)
+                for vec in expanded_vectors
+            ]
+
+    # Collect original results (likely already done by now)
+    _collect_matches(original_search_future.result(), seen_ids, all_results)
+
+    # Collect expanded results
+    for future in expanded_search_futures:
+        _collect_matches(future.result(), seen_ids, all_results)
 
     # Filter out test files — only keep actual library source code
     all_results = [

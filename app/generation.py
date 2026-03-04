@@ -1,10 +1,15 @@
 import logging
+import tiktoken
 from langfuse.openai import OpenAI
-from app.config import OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_FOLLOWUP_ANSWER_CHARS
+from app.config import (
+    OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_FOLLOWUP_ANSWER_CHARS,
+    MAX_CONTEXT_TOKENS_PER_CHUNK,
+)
 
 logger = logging.getLogger(__name__)
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+_encoding = tiktoken.encoding_for_model(LLM_MODEL)
 
 CITATION_RULES = """- You are given numbered sources [Source 1] through [Source N]. IMPORTANT: When you use information from a source, you MUST cite it inline using the bracketed number matching the source (e.g. [1], [2], [3]). Place the citation immediately after the sentence that uses that source's information. Every claim from a source needs a citation. Example: "The `DGESV` subroutine solves general linear systems [1]. It uses LU factorization with partial pivoting [2].\""""
 
@@ -154,6 +159,14 @@ def get_system_prompt(mode: str) -> str:
     return PROMPTS.get(mode, SYSTEM_PROMPT)
 
 
+def _truncate_text(text: str, max_tokens: int) -> str:
+    """Truncate text to max_tokens using tiktoken."""
+    tokens = _encoding.encode(text)
+    if len(tokens) <= max_tokens:
+        return text
+    return _encoding.decode(tokens[:max_tokens]) + "\n... [truncated]"
+
+
 def build_context(results: list[dict]) -> str:
     """Format retrieved code chunks into numbered context for the LLM."""
     context_parts = []
@@ -161,7 +174,8 @@ def build_context(results: list[dict]) -> str:
         header = f"[Source {i}] {r['file_path']}:lines {r['start_line']}-{r['end_line']} — {r['name']}"
         if r["dependencies"]:
             header += f" (calls: {r['dependencies']})"
-        context_parts.append(f"{header}\n{r['text']}")
+        text = _truncate_text(r['text'], MAX_CONTEXT_TOKENS_PER_CHUNK)
+        context_parts.append(f"{header}\n{text}")
     return "\n\n---\n\n".join(context_parts)
 
 
@@ -179,7 +193,8 @@ def build_deps_context(graph: dict) -> str:
             deps = info.get("dependencies", [])
             if deps:
                 header += f" (calls: {', '.join(deps)})"
-            parts.append(f"{header}\n{info.get('text', '')}")
+            text = _truncate_text(info.get('text', ''), MAX_CONTEXT_TOKENS_PER_CHUNK)
+            parts.append(f"{header}\n{text}")
             parts.append("---")
             source_num += 1
         else:
