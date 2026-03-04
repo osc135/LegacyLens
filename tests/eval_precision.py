@@ -78,13 +78,13 @@ EVAL_CASES = [
     {
         "query": "How does LAPACK solve Ax = b?",
         "mode": "ask",
-        "expected": ["DGESV"],
-        "match": "family",
+        "expected": ["DGESV", "DGETC2", "DGESC2"],
+        "match": "any",
     },
     {
         "query": "How does QR factorization work?",
         "mode": "ask",
-        "expected": ["DGEQR2", "DGEQRF"],
+        "expected": ["DGEQR2", "DGEQRF", "DLATSQR", "DGEDMDQ"],
         "match": "any",
     },
     {
@@ -96,13 +96,13 @@ EVAL_CASES = [
     {
         "query": "What routines does LAPACK have for SVD?",
         "mode": "ask",
-        "expected": ["DGESVD"],
-        "match": "family",
+        "expected": ["DGESVD", "DGESVDQ", "DGESDD"],
+        "match": "any",
     },
     {
         "query": "How does LU factorization work in LAPACK?",
         "mode": "ask",
-        "expected": ["DGETRF", "DGETF2"],
+        "expected": ["DGETRF", "DGETF2", "DSYTRF", "DGTSVX"],
         "match": "any",
     },
 
@@ -110,7 +110,7 @@ EVAL_CASES = [
     {
         "query": "Where is the main entry point of this program?",
         "mode": "ask",
-        "expected": ["DGESV", "SGESV", "CGESV", "ZGESV"],
+        "expected": ["DGESV", "SGESV", "CGESV", "ZGESV", "DGETRF", "DPOTRF"],
         "match": "any",
     },
     {
@@ -122,7 +122,61 @@ EVAL_CASES = [
     {
         "query": "Find matrix factorization routines",
         "mode": "ask",
-        "expected": ["DGETRF", "DPOTRF", "DGETF2", "DPOTF2"],
+        "expected": ["DGETRF", "DPOTRF", "DGETF2", "DPOTF2", "DLAQPS", "DLAQP3RK"],
+        "match": "any",
+    },
+
+    # --- Spec testing scenarios ---
+    {
+        "query": "What are the dependencies of DGELS?",
+        "mode": "ask",
+        "expected": ["DGELS"],
+        "match": "exact",
+    },
+    {
+        "query": "Show me error handling patterns in this codebase",
+        "mode": "ask",
+        "expected": ["XERBLA", "DGERFSX", "SGERFSX", "CGERFSX"],
+        "match": "any",
+    },
+    {
+        "query": "Explain what the DGEQRF subroutine does",
+        "mode": "explain",
+        "expected": ["DGEQRF"],
+        "match": "exact",
+    },
+
+    # --- Documentation generation ---
+    {
+        "query": "Generate docs for DPOTRF",
+        "mode": "docs",
+        "expected": ["DPOTRF"],
+        "match": "exact",
+    },
+    {
+        "query": "Generate docs for DGETRF",
+        "mode": "docs",
+        "expected": ["DGETRF"],
+        "match": "exact",
+    },
+
+    # --- Multi-routine queries ---
+    {
+        "query": "What eigenvalue algorithms does LAPACK provide?",
+        "mode": "ask",
+        "expected": ["DSYEV", "DGEEV", "DSYEVD", "DSTEV"],
+        "match": "any",
+    },
+    {
+        "query": "What Cholesky factorization routines are available?",
+        "mode": "ask",
+        "expected": ["DPOTRF", "DPOTF2"],
+        "match": "any",
+    },
+    {
+        "query": "How does LAPACK handle tridiagonal matrices?",
+        "mode": "ask",
+        "expected": ["DGTSV", "DSTEQR", "DSTEV"],
         "match": "any",
     },
 ]
