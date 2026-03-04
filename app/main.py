@@ -186,6 +186,9 @@ async def query(request: Request):
                 for text_chunk in gen:
                     full_answer.append(text_chunk)
                     yield f"data: {json.dumps({'type': 'answer', 'content': text_chunk})}\n\n"
+            except ValueError as e:
+                # Langfuse/OpenTelemetry context detach error — answer already streamed, safe to continue
+                logger.debug("Context detach during streaming (non-fatal): %s", e)
             except Exception as e:
                 logger.error("Generation failed: %s", e)
                 yield f"data: {json.dumps({'type': 'error', 'content': 'Answer generation failed.'})}\n\n"
