@@ -3,6 +3,7 @@ import logging
 import os
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -337,40 +338,36 @@ async def query(request: Request):
             except Exception as e:
                 logger.error("Source serialization failed: %s", e)
 
-            # Score retrieval precision (skip for deps mode)
-            if req.mode != "deps":
-                try:
-                    if results:
-                        precision_result = score_retrieval_precision(req.query, results)
-                        yield f"data: {json.dumps({'type': 'precision', 'precision': precision_result['precision'], 'scores': precision_result['scores']})}\n\n"
-                        _log_precision(req.query, req.mode, precision_result)
-                except Exception as e:
-                    logger.warning("Retrieval precision scoring failed: %s", e)
-
-            # Verify citation grounding
-            try:
-                full_text = "".join(full_answer)
-                if full_text and results:
-                    citation_checks = verify_citations(full_text, results)
-                    if citation_checks:
-                        yield f"data: {json.dumps({'type': 'verification', 'citations': citation_checks})}\n\n"
-                        # Log to file for review
-                        _log_verification(req.query, req.mode, citation_checks)
-            except Exception as e:
-                logger.warning("Citation verification failed: %s", e)
-
-            # Send trace ID so frontend can attach feedback to the right trace
+            # Send trace ID and [DONE] immediately so the answer feels complete
             if trace_id:
                 yield f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id})}\n\n"
 
             yield "data: [DONE]\n\n"
 
-            # Generate follow-up suggestions after [DONE] (non-blocking)
-            try:
-                followups = generate_followups(req.query, "".join(full_answer))
-                yield f"data: {json.dumps({'type': 'followups', 'questions': followups})}\n\n"
-            except Exception as e:
-                logger.warning("Follow-up generation failed: %s", e)
+            # Run post-stream ops (precision, verification, followups) in parallel
+            full_text = "".join(full_answer)
+            futures = {}
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                if req.mode != "deps" and results:
+                    futures[pool.submit(score_retrieval_precision, req.query, results)] = "precision"
+                if full_text and results:
+                    futures[pool.submit(verify_citations, full_text, results)] = "verification"
+                futures[pool.submit(generate_followups, req.query, full_text)] = "followups"
+
+                for future in as_completed(futures):
+                    kind = futures[future]
+                    try:
+                        result = future.result()
+                        if kind == "precision":
+                            yield f"data: {json.dumps({'type': 'precision', 'precision': result['precision'], 'scores': result['scores']})}\n\n"
+                            _log_precision(req.query, req.mode, result)
+                        elif kind == "verification" and result:
+                            yield f"data: {json.dumps({'type': 'verification', 'citations': result})}\n\n"
+                            _log_verification(req.query, req.mode, result)
+                        elif kind == "followups":
+                            yield f"data: {json.dumps({'type': 'followups', 'questions': result})}\n\n"
+                    except Exception as e:
+                        logger.warning("%s failed: %s", kind, e)
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
 

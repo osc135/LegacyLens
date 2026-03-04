@@ -1144,7 +1144,7 @@ async function doStream(q,mdEl,block,mode){
             for(const ev of events){
                 const dataLine=ev.split('\n').find(l=>l.startsWith('data: '));
                 if(!dataLine)continue;
-                const d=dataLine.slice(6);if(d==='[DONE]')continue;
+                const d=dataLine.slice(6);if(d==='[DONE]'){addFeedback(block,q,mode,traceId);mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);mdEl.classList.add('copy-wrap');addCopyBtn(mdEl,()=>raw);continue;}
                 try{
                     const p=JSON.parse(d);
                     if(p.type==='graph'){addGraph(block,p.data);if(p.data)entry.graph=block.querySelector('.dep-graph')?.textContent.replace('Call Graph','').trim()||null;bottom()}
@@ -1157,12 +1157,6 @@ async function doStream(q,mdEl,block,mode){
             }
         }
         entry.answer=raw;
-        mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);
-        // Copy button on markdown response
-        mdEl.classList.add('copy-wrap');
-        addCopyBtn(mdEl,()=>raw);
-        // Feedback buttons
-        addFeedback(block,q,mode,traceId);
         exportBtn.disabled=false;
     }catch(err){
         const l=document.getElementById('ldr');if(l)l.remove();

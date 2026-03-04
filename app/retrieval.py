@@ -396,7 +396,10 @@ def resolve_dependency_graph(
     BFS traversal of subroutine dependencies.
     Returns {"root": str, "nodes": {name: {found, file_path, dependencies, text}}, "edges": [[from, to], ...]}.
     """
-    root_name = root_name.strip().upper()
+    # Extract subroutine name from natural language query (e.g. "Map DGELS dependencies" → "DGELS")
+    detected = extract_subroutine_names(root_name)
+    root_name = detected[0] if detected else root_name.strip().upper()
+
     nodes = {}
     edges = []
     visited = set()

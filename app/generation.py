@@ -288,15 +288,19 @@ def generate_deps_stream(query: str, graph: dict):
 def generate_followups(query: str, answer: str) -> list[str]:
     """Generate 3 relevant follow-up questions based on the Q&A."""
     response = openai_client.chat.completions.create(
-        model=LLM_MODEL,
+        model="gpt-4.1-nano",
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "You generate follow-up questions about the LAPACK Fortran codebase. "
-                    "Given a user question and the answer they received, suggest exactly 3 "
-                    "short follow-up questions they might want to ask next. "
-                    "Each question should be specific, useful, and different from each other. "
+                    "You generate follow-up questions for LegacyLens, a tool that lets users "
+                    "explore the LAPACK Fortran source code. Given a user question and the answer "
+                    "they received, suggest exactly 3 short follow-up questions they might ask next. "
+                    "Questions MUST be answerable by reading LAPACK source code — ask about specific "
+                    "subroutines, algorithms, parameters, call chains, or implementation details. "
+                    "NEVER ask about external tools, compilers, installation, benchmarks, or anything "
+                    "outside the LAPACK source code itself. "
+                    "Each question must be a question (end with ?), be specific, and differ from each other. "
                     "Return ONLY the 3 questions, one per line, no numbering or bullets."
                 ),
             },
