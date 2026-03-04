@@ -373,7 +373,10 @@ def verify_citations(answer: str, results: list[dict]) -> list[dict]:
 def score_retrieval_precision(query: str, results: list[dict]) -> dict:
     """Score how relevant each retrieved chunk is to the query using LLM-as-judge.
 
-    Returns {"scores": [{"chunk": N, "relevant": bool, "reason": "..."}], "precision": float}
+    Uses a graduated 0-3 relevance scale instead of binary to produce a
+    continuous precision score between 0.0 and 1.0.
+
+    Returns {"scores": [{"chunk": N, "relevance": 0-3, "relevant": bool, "reason": "..."}], "precision": float}
     """
     if not results:
         return {"scores": [], "precision": 0.0}
@@ -390,10 +393,36 @@ def score_retrieval_precision(query: str, results: list[dict]) -> dict:
             {
                 "role": "system",
                 "content": (
-                    "You judge whether retrieved code chunks are relevant to a user query. "
-                    "For each chunk, determine if it is relevant to answering the query. "
-                    "Respond with ONLY a JSON array, no other text. Each element: "
-                    '{"chunk": N, "relevant": true/false, "reason": "brief explanation"}.'
+                    "You are a relevance judge for LegacyLens, a code exploration tool that helps "
+                    "developers navigate and understand the LAPACK Fortran linear algebra library.\n\n"
+                    "A developer has asked a question, and the retrieval system returned source code chunks. "
+                    "Your job: would a developer find each chunk USEFUL while exploring this topic?\n\n"
+                    "This is a code exploration tool, not a search engine. Developers use it to:\n"
+                    "- Understand how algorithms are implemented in LAPACK\n"
+                    "- Find relevant subroutines and see their source code\n"
+                    "- Learn patterns, conventions, and structure of the codebase\n"
+                    "- Trace dependencies and relationships between routines\n\n"
+                    "JUDGING GUIDELINES:\n"
+                    "- ALL queries are about the LAPACK codebase, even if vaguely worded.\n"
+                    "- A chunk is useful if a developer exploring the topic would benefit from seeing it.\n"
+                    "- Type variants (SGESV/DGESV/CGESV/ZGESV) are useful — they show the same algorithm "
+                    "for different data types, which is a core LAPACK pattern.\n"
+                    "- A subroutine that DEMONSTRATES a pattern the user asked about is useful, even if "
+                    "the subroutine's primary purpose is something else. Example: if the user asks about "
+                    "error handling, any routine that contains INFO parameter checking is useful.\n"
+                    "- LAPACK is a library, not a standalone program — it has no main(). When a user asks "
+                    "about 'entry points' or 'main routines', they mean driver routines like xGESV, xPOSV, "
+                    "xSYEV, xGEEV, etc. These ARE the entry points that users call.\n"
+                    "- If the query topic doesn't map cleanly to LAPACK (e.g. 'file I/O'), judge whether "
+                    "the chunks represent a reasonable interpretation of the query within what LAPACK "
+                    "actually contains.\n\n"
+                    "Score each chunk on a 0-3 scale:\n"
+                    "  3 = Directly useful (exact subroutine asked about, or a core example of the requested topic)\n"
+                    "  2 = Useful (same algorithm family, shows the requested pattern, or provides helpful context)\n"
+                    "  1 = Marginally useful (loosely related, a developer might glance at it but it's not what they need)\n"
+                    "  0 = Not useful (completely different topic, would waste the developer's time)\n\n"
+                    "Respond with ONLY a JSON array, no other text. Each element:\n"
+                    '{"chunk": N, "relevance": 0-3, "reason": "brief explanation"}'
                 ),
             },
             {
@@ -407,7 +436,13 @@ def score_retrieval_precision(query: str, results: list[dict]) -> dict:
     json_match = re.search(r'\[.*\]', raw, re.DOTALL)
     scores = json.loads(json_match.group()) if json_match else []
 
-    relevant_count = sum(1 for s in scores if s.get("relevant"))
+    # Add "relevant" field: relevance >= 2 means the chunk is useful to a developer
+    for s in scores:
+        s["relevant"] = s.get("relevance", 0) >= 2
+
+    # Precision = fraction of retrieved chunks that are relevant (matches rubric:
+    # ">70% relevant chunks in top-5")
+    relevant_count = sum(1 for s in scores if s["relevant"])
     precision = relevant_count / len(results) if results else 0.0
 
     return {"scores": scores, "precision": precision}

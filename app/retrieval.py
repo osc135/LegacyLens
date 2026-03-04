@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from langfuse.openai import OpenAI
 from pinecone import Pinecone
@@ -40,11 +41,31 @@ else:
 # Reuse a single thread pool across requests to avoid creation overhead
 _executor = ThreadPoolExecutor(max_workers=6)
 
+# Pattern for likely LAPACK subroutine names: optional type prefix + 3+ alpha chars, 4+ total
+_LAPACK_NAME_RE = re.compile(r'\b([SDCZ]?[A-Z]{3,})\b')
+_LAPACK_TYPE_PREFIXES = set("SDCZ")
+
+
+def extract_subroutine_names(query: str) -> list[str]:
+    """Extract likely LAPACK subroutine names (e.g. DGESV, ZHEEV) from a query string."""
+    candidates = _LAPACK_NAME_RE.findall(query.upper())
+    names = []
+    for c in candidates:
+        # Must be 4+ chars and start with a LAPACK type prefix
+        if len(c) >= 4 and c[0] in _LAPACK_TYPE_PREFIXES:
+            # Skip common English words that match the pattern
+            if c not in {"SAME", "SOME", "SURE", "SIZE", "SIDE", "STEP", "ZERO",
+                         "CASE", "CODE", "DATA", "DOES", "SHOW", "CALL", "COPY",
+                         "STOP", "SAVE", "SORT", "SAFE", "SWAP", "SCAN", "CHAR",
+                         "SELF", "DONE", "DOWN"}:
+                names.append(c)
+    return names
+
 
 def expand_query(query: str) -> list[str]:
     """
     Use GPT-4o-mini to rephrase the user's question into
-    3 technical variations that will match LAPACK code better.
+    2 technical variations that will match LAPACK code better.
     """
     try:
         response = openai_client.chat.completions.create(
@@ -55,10 +76,12 @@ def expand_query(query: str) -> list[str]:
                     "role": "system",
                     "content": (
                         "You are a search query expander for the LAPACK Fortran linear algebra library. "
-                        "Given a user question, generate exactly 3 alternative search queries that would "
+                        "Given a user question, generate exactly 2 alternative search queries that would "
                         "match LAPACK subroutine names, comment headers, and documentation. "
                         "Use technical Fortran/LAPACK terminology. "
-                        "Return ONLY the 3 queries, one per line, no numbering or extra text."
+                        "If the user names a specific subroutine (e.g. DGESV), do NOT substitute "
+                        "type-prefix variants (SGESV, CGESV, ZGESV) — keep the exact name. "
+                        "Return ONLY the 2 queries, one per line, no numbering or extra text."
                     ),
                 },
                 {"role": "user", "content": query},
@@ -159,8 +182,8 @@ def rerank(query: str, results: list[dict], top_k: int) -> list[dict]:
     candidates = []
     for i, r in enumerate(results):
         name = r["name"]
-        # Use first 200 chars of text for context
-        snippet = r["text"][:200].replace("\n", " ").strip()
+        # Use first 400 chars of text for better reranker context
+        snippet = r["text"][:400].replace("\n", " ").strip()
         candidates.append(f"{i}: {name} — {snippet}")
 
     candidates_text = "\n".join(candidates)
@@ -176,6 +199,18 @@ def rerank(query: str, results: list[dict], top_k: int) -> list[dict]:
                         "You are a relevance judge for LAPACK Fortran subroutine search results. "
                         "Given a user query and a numbered list of candidate subroutines, "
                         f"select the {top_k} MOST RELEVANT candidates. "
+                        "IMPORTANT ranking rules:\n"
+                        "- If the query names a specific subroutine (e.g. DGESV), candidates with "
+                        "that EXACT name MUST be ranked first.\n"
+                        "- Subroutines with similar names are often COMPLETELY DIFFERENT algorithms. "
+                        "DGESV (linear solve), DGESVD (SVD), DGESVJ (Jacobi SVD), DGESVX (expert linear solve) "
+                        "are NOT the same. Match the exact name the user asked about.\n"
+                        "- Type-prefix variants (SGESV vs DGESV vs CGESV vs ZGESV) are different subroutines "
+                        "but implement the same algorithm for different types — rank them AFTER the exact match "
+                        "but BEFORE unrelated routines.\n"
+                        "- Helper routines (XERBLA, LSAME, ILAENV) are rarely the primary answer.\n"
+                        "- Prefer subroutines that are direct dependencies of the queried routine "
+                        "(e.g. DGETRF is called by DGESV, so it's relevant to a DGESV query).\n"
                         "Return ONLY a JSON array of their indices in order of relevance, "
                         f"e.g. [0, 3, 1, 4, 2]. Return exactly {top_k} indices."
                     ),
@@ -232,6 +267,23 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
     original_dense, original_sparse = original_embed_future.result()[0]
     original_search_future = _executor.submit(_pinecone_query, original_dense, original_sparse, fetch_k)
 
+    # Phase 2b: Fire name-targeted queries for any detected subroutine names
+    detected_names = extract_subroutine_names(query)
+    name_search_futures = []
+    for name in detected_names:
+        # Metadata-filtered query using already-computed embedding — no extra latency
+        name_search_futures.append(
+            _executor.submit(
+                lambda n=name: index.query(
+                    vector=original_dense,
+                    sparse_vector=original_sparse,
+                    top_k=5,
+                    include_metadata=True,
+                    filter={"name": {"$eq": n}},
+                ).matches
+            )
+        )
+
     # Phase 3: When expansion is ready, batch-embed expanded queries (as future)
     expanded_search_futures = []
     if expansion_future is not None:
@@ -251,6 +303,13 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
 
     # Collect original results (likely already done by now)
     _collect_matches(original_search_future.result(), seen_ids, all_results)
+
+    # Collect name-targeted results with score boost so they survive into rerank
+    for future in name_search_futures:
+        matches = future.result()
+        for match in matches:
+            match.score = match.score + 0.5  # boost name matches
+        _collect_matches(matches, seen_ids, all_results)
 
     # Collect expanded results
     for future in expanded_search_futures:

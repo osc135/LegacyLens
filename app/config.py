@@ -24,8 +24,8 @@ LLM_MODEL = "gpt-4o-mini"
 
 # Retrieval
 TOP_K = 5
-FETCH_MULTIPLIER = 3  # Over-fetch ratio to compensate for filtering
-RERANK_CANDIDATES = 10  # Number of candidates to send to LLM reranker
+FETCH_MULTIPLIER = 4  # Over-fetch ratio to compensate for filtering
+RERANK_CANDIDATES = 20  # Number of candidates to send to LLM reranker
 
 # Generation
 LLM_TEMPERATURE = 0.3
