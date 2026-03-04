@@ -321,12 +321,9 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
         if not r["file_path"].startswith(EXCLUDED_PREFIXES)
     ]
 
-    # Sort by score (best first) and take rerank candidates
+    # Sort by score (best first) and return top results
     all_results.sort(key=lambda x: x["score"], reverse=True)
-    candidates = all_results[:RERANK_CANDIDATES]
-
-    # Rerank with LLM to filter irrelevant results
-    return rerank(query, candidates, top_k)
+    return all_results[:top_k]
 
 
 def search_by_name(name: str) -> dict | None:
