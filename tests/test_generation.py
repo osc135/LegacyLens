@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.retrieval import search
-from app.generation import generate_answer, generate_answer_stream, build_context
+from app.generation import generate_answer, generate_answer_stream, build_context, score_retrieval_precision
 
 
 def test_build_context():
@@ -58,6 +58,34 @@ def test_generate_answer_stream():
     print("PASS: Streaming generation works\n")
 
 
+def test_score_retrieval_precision():
+    """Test retrieval precision scoring with a live search."""
+    results = search("What does DGESV do?", top_k=5)
+    result = score_retrieval_precision("What does DGESV do?", results)
+
+    print(f"Precision: {result['precision']}")
+    print(f"Scores: {result['scores']}")
+
+    assert "precision" in result, "Result should have precision key"
+    assert "scores" in result, "Result should have scores key"
+    assert 0.0 <= result["precision"] <= 1.0, "Precision should be between 0 and 1"
+    assert len(result["scores"]) > 0, "Should have at least one score"
+    for s in result["scores"]:
+        assert "chunk" in s, "Each score should have chunk number"
+        assert "relevant" in s, "Each score should have relevant flag"
+        assert "reason" in s, "Each score should have reason"
+    print("PASS: Retrieval precision scoring works\n")
+
+
+def test_score_retrieval_precision_empty():
+    """Test retrieval precision scoring with empty results."""
+    result = score_retrieval_precision("anything", [])
+
+    assert result["precision"] == 0.0, "Empty results should give 0 precision"
+    assert result["scores"] == [], "Empty results should give empty scores"
+    print("PASS: Empty retrieval precision works\n")
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("Running generation tests...")
@@ -66,6 +94,8 @@ if __name__ == "__main__":
     test_build_context()
     test_generate_answer()
     test_generate_answer_stream()
+    test_score_retrieval_precision()
+    test_score_retrieval_precision_empty()
 
     print("=" * 50)
     print("All tests passed!")

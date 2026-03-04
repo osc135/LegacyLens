@@ -368,3 +368,46 @@ def verify_citations(answer: str, results: list[dict]) -> list[dict]:
     if json_match:
         return json.loads(json_match.group())
     return []
+
+
+def score_retrieval_precision(query: str, results: list[dict]) -> dict:
+    """Score how relevant each retrieved chunk is to the query using LLM-as-judge.
+
+    Returns {"scores": [{"chunk": N, "relevant": bool, "reason": "..."}], "precision": float}
+    """
+    if not results:
+        return {"scores": [], "precision": 0.0}
+
+    chunks_text = ""
+    for i, r in enumerate(results, 1):
+        snippet = r.get("text", "")[:1500]
+        chunks_text += f"Chunk {i} ({r.get('name', 'unknown')}):\n{snippet}\n\n"
+
+    response = openai_client.chat.completions.create(
+        model=LLM_MODEL,
+        temperature=0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You judge whether retrieved code chunks are relevant to a user query. "
+                    "For each chunk, determine if it is relevant to answering the query. "
+                    "Respond with ONLY a JSON array, no other text. Each element: "
+                    '{"chunk": N, "relevant": true/false, "reason": "brief explanation"}.'
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Query: {query}\n\n{chunks_text}",
+            },
+        ],
+    )
+
+    raw = response.choices[0].message.content.strip()
+    json_match = re.search(r'\[.*\]', raw, re.DOTALL)
+    scores = json.loads(json_match.group()) if json_match else []
+
+    relevant_count = sum(1 for s in scores if s.get("relevant"))
+    precision = relevant_count / len(results) if results else 0.0
+
+    return {"scores": scores, "precision": precision}

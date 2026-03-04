@@ -52,6 +52,7 @@ PATTERNS_TOP_K = 5
 # Feedback
 FEEDBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "feedback")
 VERIFICATION_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "verification_log.jsonl")
+PRECISION_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "precision_log.jsonl")
 MAX_FEEDBACK_COMMENT = 500
 
 # Paths

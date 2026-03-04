@@ -12,9 +12,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from langfuse import get_client
-from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT, VERIFICATION_LOG
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT, VERIFICATION_LOG, PRECISION_LOG
 from app.retrieval import search, resolve_dependency_graph
-from app.generation import generate_answer_stream, generate_followups, generate_deps_stream, verify_citations
+from app.generation import generate_answer_stream, generate_followups, generate_deps_stream, verify_citations, score_retrieval_precision
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,24 @@ def _log_verification(query: str, mode: str, citations: list[dict]):
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
         logger.warning("Failed to write verification log: %s", e)
+
+
+def _log_precision(query: str, mode: str, precision_result: dict):
+    """Append a retrieval precision result to the JSONL log file."""
+    try:
+        os.makedirs(os.path.dirname(PRECISION_LOG), exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "mode": mode,
+            "precision": precision_result["precision"],
+            "precision_pct": f"{precision_result['precision'] * 100:.0f}%",
+            "scores": precision_result["scores"],
+        }
+        with open(PRECISION_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.warning("Failed to write precision log: %s", e)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -191,6 +209,16 @@ async def query(request: Request):
                 yield f"data: {sources_json}\n\n"
             except Exception as e:
                 logger.error("Source serialization failed: %s", e)
+
+            # Score retrieval precision (skip for deps mode)
+            if req.mode != "deps":
+                try:
+                    if results:
+                        precision_result = score_retrieval_precision(req.query, results)
+                        yield f"data: {json.dumps({'type': 'precision', 'precision': precision_result['precision'], 'scores': precision_result['scores']})}\n\n"
+                        _log_precision(req.query, req.mode, precision_result)
+                except Exception as e:
+                    logger.warning("Retrieval precision scoring failed: %s", e)
 
             # Verify citation grounding
             try:
