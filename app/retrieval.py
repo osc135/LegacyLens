@@ -31,7 +31,11 @@ EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BL
 
 # Load fitted BM25 model for sparse query vectors
 BM25_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "bm25_model.json")
-bm25 = BM25Encoder().load(BM25_MODEL_PATH)
+if os.path.exists(BM25_MODEL_PATH):
+    bm25 = BM25Encoder().load(BM25_MODEL_PATH)
+else:
+    logger.warning("BM25 model not found at %s — using default encoder", BM25_MODEL_PATH)
+    bm25 = BM25Encoder.default()
 
 # Reuse a single thread pool across requests to avoid creation overhead
 _executor = ThreadPoolExecutor(max_workers=6)
