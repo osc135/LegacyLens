@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import time
+import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -12,14 +14,82 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from langfuse import get_client
-from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT, VERIFICATION_LOG, PRECISION_LOG
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT, VERIFICATION_LOG, PRECISION_LOG, SAMPLE_QUERIES
 from app.retrieval import search, resolve_dependency_graph
 from app.generation import generate_answer_stream, generate_followups, generate_deps_stream, verify_citations, score_retrieval_precision
 
 logger = logging.getLogger(__name__)
 
+_query_cache: dict = {}
+
+
+def _warm_cache():
+    """Pre-run sample queries so they can be served instantly."""
+    for query, mode in SAMPLE_QUERIES:
+        try:
+            logger.info("Caching sample query: %s [%s]", query, mode)
+            graph = None
+            if mode == "deps":
+                graph = resolve_dependency_graph(query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
+                results = [
+                    {
+                        "name": name,
+                        "file_path": info.get("file_path", ""),
+                        "start_line": info.get("start_line", 0),
+                        "end_line": info.get("end_line", 0),
+                        "dependencies": ", ".join(info.get("dependencies", [])),
+                        "text": info.get("text", ""),
+                        "score": 1.0,
+                    }
+                    for name, info in graph["nodes"].items()
+                    if info.get("found")
+                ]
+                gen = generate_deps_stream(query, graph)
+            else:
+                results = search(query, top_k=5)
+                gen = generate_answer_stream(query, results, mode=mode)
+
+            full_answer = []
+            for chunk in gen:
+                full_answer.append(chunk)
+
+            answer_text = "".join(full_answer)
+
+            try:
+                followups = generate_followups(query, answer_text)
+            except Exception:
+                followups = []
+
+            precision_result = None
+            if mode != "deps" and results:
+                try:
+                    precision_result = score_retrieval_precision(query, results)
+                except Exception:
+                    pass
+
+            citation_checks = None
+            if answer_text and results:
+                try:
+                    citation_checks = verify_citations(answer_text, results)
+                except Exception:
+                    pass
+
+            _query_cache[(query, mode)] = {
+                "results": results,
+                "answer": answer_text,
+                "graph": graph,
+                "followups": followups,
+                "precision": precision_result,
+                "citations": citation_checks,
+            }
+            logger.info("Cached: %s [%s]", query, mode)
+        except Exception as e:
+            logger.warning("Failed to cache query '%s' [%s]: %s", query, mode, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    threading.Thread(target=_warm_cache, daemon=True).start()
     yield
     get_client().flush()
 
@@ -141,6 +211,60 @@ async def query(request: Request):
                 tags=["legacylens", req.mode],
             )
             trace_id = get_client().get_current_trace_id()
+
+            # Serve from cache if this is a pre-cached sample query
+            cached = _query_cache.get((req.query, req.mode))
+            if cached:
+                logger.info("Serving cached response: %s [%s]", req.query, req.mode)
+
+                # Stream the graph if present
+                if cached["graph"]:
+                    try:
+                        yield f"data: {json.dumps({'type': 'graph', 'data': cached['graph']})}\n\n"
+                    except Exception as e:
+                        logger.error("Graph serialization failed: %s", e)
+
+                # Stream the answer in small chunks with pacing to look natural
+                answer = cached["answer"]
+                chunk_size = 20
+                for i in range(0, len(answer), chunk_size):
+                    yield f"data: {json.dumps({'type': 'answer', 'content': answer[i:i+chunk_size]})}\n\n"
+                    time.sleep(0.008)
+
+                # Send sources
+                try:
+                    chunks = [
+                        {
+                            "name": r["name"],
+                            "file_path": r["file_path"],
+                            "start_line": r["start_line"],
+                            "end_line": r["end_line"],
+                            "dependencies": r["dependencies"],
+                            "score": float(r["score"]),
+                            "text": r["text"][:2000],
+                        }
+                        for r in cached["results"]
+                    ]
+                    yield f"data: {json.dumps({'type': 'sources', 'chunks': chunks})}\n\n"
+                except Exception as e:
+                    logger.error("Source serialization failed: %s", e)
+
+                # Serve cached precision and citation results
+                if cached.get("precision"):
+                    yield f"data: {json.dumps({'type': 'precision', 'precision': cached['precision']['precision'], 'scores': cached['precision']['scores']})}\n\n"
+
+                if cached.get("citations"):
+                    yield f"data: {json.dumps({'type': 'verification', 'citations': cached['citations']})}\n\n"
+
+                if trace_id:
+                    yield f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id})}\n\n"
+
+                yield "data: [DONE]\n\n"
+
+                if cached.get("followups"):
+                    yield f"data: {json.dumps({'type': 'followups', 'questions': cached['followups']})}\n\n"
+
+                return
 
             # Step 1: Retrieve relevant code chunks (or dependency graph)
             graph = None

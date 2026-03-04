@@ -57,3 +57,12 @@ MAX_FEEDBACK_COMMENT = 500
 
 # Paths
 LAPACK_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "lapack")
+
+# Sample queries to pre-cache on startup for instant responses
+SAMPLE_QUERIES = [
+    ("How does LAPACK solve a system of linear equations?", "ask"),
+    ("What eigenvalue algorithms does LAPACK provide?", "ask"),
+    ("Walk me through the DGESVD singular value decomposition", "explain"),
+    ("Generate docs for DPOTRF", "docs"),
+    ("Map DGELS dependencies", "deps"),
+]

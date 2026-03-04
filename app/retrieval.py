@@ -308,7 +308,7 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
     for future in name_search_futures:
         matches = future.result()
         for match in matches:
-            match.score = match.score + 0.5  # boost name matches
+            match.score = match.score + 1.0  # boost name matches
         _collect_matches(matches, seen_ids, all_results)
 
     # Collect expanded results

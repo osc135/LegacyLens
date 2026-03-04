@@ -21,7 +21,7 @@ All answers include citation grounding — source references are verified agains
 ## Tech Stack
 
 - **Backend:** Python 3.11, FastAPI, Uvicorn
-- **LLM:** GPT-4o-mini (generation, query expansion, reranking)
+- **LLM:** GPT-4o-mini (generation, query expansion)
 - **Embeddings:** text-embedding-3-small (1536-dim)
 - **Vector DB:** Pinecone (hybrid dense + BM25 sparse search)
 - **Observability:** Langfuse (full LLM trace logging)
@@ -43,16 +43,14 @@ User Query
     │       │
     │       └─→ Hybrid Pinecone search (dense + sparse)
     │
-    └─→ Candidate Pool (deduplicated, score-boosted)
-            │
-            ├─→ LLM Reranker (top 20 → top 5)
+    └─→ Candidate Pool (deduplicated, score-boosted, top 5)
             │
             ├─→ Streaming Answer Generation (GPT-4o-mini)
             │
             └─→ Citation Verification + Precision Scoring
 ```
 
-All retrieval phases run in parallel using a shared thread pool for minimal latency.
+All retrieval phases run in parallel using a shared thread pool for minimal latency. The 5 sample queries shown on the landing page are pre-cached at startup for instant responses.
 
 ## Setup
 
@@ -109,13 +107,20 @@ docker run -p 8000:8000 --env-file .env legacylens
 
 ## Performance
 
-| Metric | Value |
-|--------|-------|
-| Retrieval precision (named subroutine queries) | >70% |
-| Query latency (p50) | ~2.5s |
-| Embedding model | text-embedding-3-small |
-| Reranker | GPT-4o-mini (zero-shot) |
-| Search strategy | Hybrid dense+sparse, query expansion, name-targeted boost |
+| Metric | Target | Actual |
+|--------|--------|--------|
+| Query latency (time to first token) | <3s | ~2–3s |
+| Retrieval precision (top-5) | >70% relevant | >70% (LLM-as-judge, 0–3 scale) |
+| Codebase coverage | 100% files indexed | 3,586 / 3,586 Fortran files (100%) |
+| Ingestion scale | 10,000+ LOC | 1,553,667 LOC across 3,586 files → 5,520 vectors |
+
+### Retrieval pipeline
+
+| Component | Detail |
+|-----------|--------|
+| Embedding model | text-embedding-3-small (1536-dim) |
+| Search strategy | Hybrid dense + BM25 sparse, query expansion, name-targeted boost |
+| Scoring | Pinecone hybrid score with +1.0 boost for exact subroutine name matches |
 
 ## Testing
 
