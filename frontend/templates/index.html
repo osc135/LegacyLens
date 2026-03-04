@@ -9,6 +9,10 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
     <script>mermaid.initialize({startOnLoad:false,theme:'dark',themeVariables:{primaryColor:'#7c6aef',primaryTextColor:'#e8e8ef',primaryBorderColor:'#4f8efa',lineColor:'#8a8a9a',secondaryColor:'#1a1a2e',tertiaryColor:'#0e0e16'}});</script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark-dimmed.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/fortran.min.js"></script>
+    <script>hljs.configure({ignoreUnescapedHTML:true});</script>
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -226,7 +230,6 @@
             padding:18px 20px;
             background:none;border:none;border-radius:0;
             font-size:13px;line-height:1.75;
-            color:var(--code-text);
             white-space:pre-wrap;
             word-wrap:break-word;
             overflow-wrap:break-word;
@@ -329,10 +332,22 @@
             font-size:12px;line-height:1.7;
             white-space:pre-wrap;word-wrap:break-word;
             overflow-wrap:break-word;
-            color:var(--code-text);
-            background:var(--code-bg);
+            background:var(--code-bg)!important;
             border:none;border-radius:0;
         }
+        .sc-code pre code.hljs{background:transparent!important;padding:0}
+        .hljs{background:var(--code-bg)!important}
+        /* highlight.js theme color overrides for visibility */
+        .hljs-keyword,.hljs-selector-tag{color:#f47067!important}
+        .hljs-type,.hljs-built_in{color:#f69d50!important}
+        .hljs-string,.hljs-attr{color:#96d0ff!important}
+        .hljs-comment{color:#768390!important}
+        .hljs-number,.hljs-literal{color:#6cb6ff!important}
+        .hljs-title,.hljs-title\.function_{color:#dcbdfb!important}
+        /* custom source card highlight classes */
+        .hl-kw{color:#f47067}
+        .hl-tp{color:#f69d50}
+        .hl-at{color:#d2a8ff}
 
         /* ═══ MODE TABS ═══ */
         .mode-tabs{
@@ -689,7 +704,7 @@
             .md p,.md li{color:#333!important}
             .md code{background:#eef!important;border-color:#ddd!important;color:#5b4cc4!important}
             .md pre{background:#f4f4f8!important;border-color:#ddd!important}
-            .md pre code{color:#333!important;background:none!important;border:none!important}
+            .md pre code{background:none!important;border:none!important}
             .md blockquote{background:#f4f0ff!important;border-left-color:#5b4cc4!important;color:#444!important}
             .md table{background:#fff!important}
             .md th{background:#f4f4f8!important;color:#444!important;border-color:#ddd!important}
@@ -723,7 +738,7 @@
             .sc-name{color:#333!important}
             .sc-path,.sc-ln{color:#888!important}
             .sc-code{display:block!important}
-            .sc-code pre{background:#f4f4f8!important;border-color:#ddd!important;color:#333!important}
+            .sc-code pre{background:#f4f4f8!important;border-color:#ddd!important}
             .sc-chev{display:none!important}
             .sc-deps{background:#f8f8fc!important;border-color:#ddd!important;color:#555!important}
         }
@@ -1156,6 +1171,18 @@ async function doStream(q,mdEl,block,mode){
     sendBtn.disabled=false;input.focus();
 }
 
+function hlFortranSrc(codeEl){
+    let h=codeEl.innerHTML;
+    // Types (orange) — multi-word first to avoid partial matches
+    h=h.replace(/\b(DOUBLE PRECISION|COMPLEX\*16)\b/g,'<span class="hl-tp">$1</span>');
+    h=h.replace(/\b(INTEGER|REAL|COMPLEX|CHARACTER|LOGICAL)\b/g,'<span class="hl-tp">$1</span>');
+    // Control flow keywords (red)
+    h=h.replace(/\b(SUBROUTINE|FUNCTION|PROGRAM|MODULE|CALL|RETURN|CONTINUE|ELSEIF|ENDIF|ENDDO|ENTRY|WHILE|WHERE|THEN|ELSE|STOP|GOTO|END|DO|IF)\b/g,'<span class="hl-kw">$1</span>');
+    // Attributes / qualifiers (purple)
+    h=h.replace(/\b(ALLOCATABLE|DIMENSION|PARAMETER|INTRINSIC|EXTERNAL|IMPLICIT|INTENT|INOUT|NONE|SAVE|DATA)\b/g,'<span class="hl-at">$1</span>');
+    codeEl.innerHTML=h;
+}
+
 function renderMd(el,text,streaming){
     const l=document.getElementById('ldr');if(l)l.remove();
     let processed=text.replace(/\[([1-9])\]/g,(m,n)=>{
@@ -1170,6 +1197,7 @@ function renderMd(el,text,streaming){
     });
     el.innerHTML=html;
     if(streaming)el.innerHTML+='<span class="cur"></span>';
+    el.querySelectorAll('pre code').forEach(block=>hlFortranSrc(block));
 }
 
 function scrollToSrc(n){
@@ -1214,7 +1242,7 @@ function addSrc(container,chunks){
                 </div>
             </div>
             ${deps}
-            <div class="sc-code" id="cd-${uid}"><pre>${esc(c.text)}</pre></div>
+            <div class="sc-code" id="cd-${uid}"><pre><code class="language-fortran">${esc(c.text)}</code></pre></div>
         </div>`;
     });
     div.innerHTML=`
@@ -1224,6 +1252,8 @@ function addSrc(container,chunks){
     const mdArea=container.querySelector('.md');
     if(mdArea&&mdArea.nextSibling)container.insertBefore(div,mdArea.nextSibling);
     else container.appendChild(div);
+    // Syntax-highlight source code blocks (custom regex — hljs treats all lines as comments since they start with *)
+    div.querySelectorAll('.sc-code pre code').forEach(el=>hlFortranSrc(el));
     // Add copy buttons to source code blocks
     div.querySelectorAll('.sc-code').forEach(codeEl=>{
         const pre=codeEl.querySelector('pre');
