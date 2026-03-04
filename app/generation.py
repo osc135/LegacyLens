@@ -4,8 +4,8 @@ import re
 import tiktoken
 from langfuse.openai import OpenAI
 from app.config import (
-    OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_FOLLOWUP_ANSWER_CHARS,
-    MAX_CONTEXT_TOKENS_PER_CHUNK,
+    OPENAI_API_KEY, LLM_MODEL, FOLLOWUPS_MODEL, LLM_TEMPERATURE,
+    MAX_FOLLOWUP_ANSWER_CHARS, MAX_CONTEXT_TOKENS_PER_CHUNK,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,20 +288,22 @@ def generate_deps_stream(query: str, graph: dict):
 def generate_followups(query: str, answer: str) -> list[str]:
     """Generate 3 relevant follow-up questions based on the Q&A."""
     response = openai_client.chat.completions.create(
-        model="gpt-4.1-nano",
+        model=FOLLOWUPS_MODEL,
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "You generate follow-up questions for LegacyLens, a tool that lets users "
-                    "explore the LAPACK Fortran source code. Given a user question and the answer "
-                    "they received, suggest exactly 3 short follow-up questions they might ask next. "
-                    "Questions MUST be answerable by reading LAPACK source code — ask about specific "
-                    "subroutines, algorithms, parameters, call chains, or implementation details. "
-                    "NEVER ask about external tools, compilers, installation, benchmarks, or anything "
-                    "outside the LAPACK source code itself. "
-                    "Each question must be a question (end with ?), be specific, and differ from each other. "
-                    "Return ONLY the 3 questions, one per line, no numbering or bullets."
+                    "You generate follow-up questions for LegacyLens, a tool that searches "
+                    "LAPACK Fortran source code and returns subroutine implementations. "
+                    "Given a user question and the answer, suggest exactly 3 follow-up questions.\n\n"
+                    "RULES:\n"
+                    "- Each question MUST reference a specific LAPACK subroutine by name (e.g. DGESV, DPOTRF, DGESVD)\n"
+                    "- Questions must be answerable by reading LAPACK .f source files\n"
+                    "- Ask about: parameters, implementation steps, call chains, error handling (INFO), algorithm details\n"
+                    "- NEVER ask about: performance, benchmarks, compilers, external libraries, installation, "
+                    "sparse matrices, recommendations, limitations, or comparisons to non-LAPACK software\n"
+                    "- Each question must end with ?\n"
+                    "- Return ONLY the 3 questions, one per line, no numbering or bullets."
                 ),
             },
             {
@@ -411,6 +413,10 @@ def score_retrieval_precision(query: str, results: list[dict]) -> dict:
                     "- A chunk is useful if a developer exploring the topic would benefit from seeing it.\n"
                     "- Type variants (SGESV/DGESV/CGESV/ZGESV) are useful — they show the same algorithm "
                     "for different data types, which is a core LAPACK pattern.\n"
+                    "- Algorithm variants that solve the same problem are useful — e.g. DGELST and DGETSLS "
+                    "are relevant when asking about DGELS because they solve the same least-squares problem. "
+                    "DPOTRF2 is relevant when asking about DPOTRF. Routines called BY the target routine "
+                    "(its dependencies) are also useful context.\n"
                     "- A subroutine that DEMONSTRATES a pattern the user asked about is useful, even if "
                     "the subroutine's primary purpose is something else. Example: if the user asks about "
                     "error handling, any routine that contains INFO parameter checking is useful.\n"

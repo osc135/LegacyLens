@@ -21,11 +21,13 @@ EMBEDDING_DIMENSIONS = 1536
 
 # LLM
 LLM_MODEL = "gpt-4o-mini"
+FOLLOWUPS_MODEL = "gpt-4o-mini"
 
 # Retrieval
 TOP_K = 5
 FETCH_MULTIPLIER = 4  # Over-fetch ratio to compensate for filtering
 RERANK_CANDIDATES = 20  # Number of candidates to send to LLM reranker
+NAME_MATCH_BOOST = 1.0  # Score boost for exact subroutine name matches
 
 # Generation
 LLM_TEMPERATURE = 0.3

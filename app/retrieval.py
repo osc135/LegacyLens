@@ -19,6 +19,7 @@ from app.config import (
     DEPS_MAX_DEPTH,
     DEPS_MAX_NODES,
     RERANK_CANDIDATES,
+    NAME_MATCH_BOOST,
 )
 
 logger = logging.getLogger(__name__)
@@ -308,7 +309,7 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
     for future in name_search_futures:
         matches = future.result()
         for match in matches:
-            match.score = match.score + 1.0  # boost name matches
+            match.score = match.score + NAME_MATCH_BOOST
         _collect_matches(matches, seen_ids, all_results)
 
     # Collect expanded results

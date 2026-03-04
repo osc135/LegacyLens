@@ -22,6 +22,40 @@ from app.generation import generate_answer_stream, generate_followups, generate_
 logger = logging.getLogger(__name__)
 
 _query_cache: dict = {}
+_post_stream_pool = ThreadPoolExecutor(max_workers=3)
+
+
+def _graph_to_results(graph: dict) -> list[dict]:
+    """Convert dependency graph nodes into the standard results format."""
+    return [
+        {
+            "name": name,
+            "file_path": info.get("file_path", ""),
+            "start_line": info.get("start_line", 0),
+            "end_line": info.get("end_line", 0),
+            "dependencies": ", ".join(info.get("dependencies", [])),
+            "text": info.get("text", ""),
+            "score": 1.0,
+        }
+        for name, info in graph["nodes"].items()
+        if info.get("found")
+    ]
+
+
+def _format_source_chunks(results: list[dict]) -> list[dict]:
+    """Format retrieval results for the SSE sources payload."""
+    return [
+        {
+            "name": r["name"],
+            "file_path": r["file_path"],
+            "start_line": r["start_line"],
+            "end_line": r["end_line"],
+            "dependencies": r["dependencies"],
+            "score": float(r["score"]),
+            "text": r["text"][:2000],
+        }
+        for r in results
+    ]
 
 
 def _warm_cache():
@@ -32,19 +66,7 @@ def _warm_cache():
             graph = None
             if mode == "deps":
                 graph = resolve_dependency_graph(query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
-                results = [
-                    {
-                        "name": name,
-                        "file_path": info.get("file_path", ""),
-                        "start_line": info.get("start_line", 0),
-                        "end_line": info.get("end_line", 0),
-                        "dependencies": ", ".join(info.get("dependencies", [])),
-                        "text": info.get("text", ""),
-                        "score": 1.0,
-                    }
-                    for name, info in graph["nodes"].items()
-                    if info.get("found")
-                ]
+                results = _graph_to_results(graph)
                 gen = generate_deps_stream(query, graph)
             else:
                 results = search(query, top_k=5)
@@ -234,18 +256,7 @@ async def query(request: Request):
 
                 # Send sources
                 try:
-                    chunks = [
-                        {
-                            "name": r["name"],
-                            "file_path": r["file_path"],
-                            "start_line": r["start_line"],
-                            "end_line": r["end_line"],
-                            "dependencies": r["dependencies"],
-                            "score": float(r["score"]),
-                            "text": r["text"][:2000],
-                        }
-                        for r in cached["results"]
-                    ]
+                    chunks = _format_source_chunks(cached["results"])
                     yield f"data: {json.dumps({'type': 'sources', 'chunks': chunks})}\n\n"
                 except Exception as e:
                     logger.error("Source serialization failed: %s", e)
@@ -272,19 +283,7 @@ async def query(request: Request):
             try:
                 if req.mode == "deps":
                     graph = resolve_dependency_graph(req.query, max_depth=DEPS_MAX_DEPTH, max_nodes=DEPS_MAX_NODES)
-                    results = [
-                        {
-                            "name": name,
-                            "file_path": info.get("file_path", ""),
-                            "start_line": info.get("start_line", 0),
-                            "end_line": info.get("end_line", 0),
-                            "dependencies": ", ".join(info.get("dependencies", [])),
-                            "text": info.get("text", ""),
-                            "score": 1.0,
-                        }
-                        for name, info in graph["nodes"].items()
-                        if info.get("found")
-                    ]
+                    results = _graph_to_results(graph)
                 elif req.mode == "patterns":
                     results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
                 else:
@@ -320,18 +319,7 @@ async def query(request: Request):
 
             # Send retrieved code chunks
             try:
-                chunks = [
-                    {
-                        "name": r["name"],
-                        "file_path": r["file_path"],
-                        "start_line": r["start_line"],
-                        "end_line": r["end_line"],
-                        "dependencies": r["dependencies"],
-                        "score": float(r["score"]),
-                        "text": r["text"][:2000],
-                    }
-                    for r in results
-                ]
+                chunks = _format_source_chunks(results)
                 sources_json = json.dumps({'type': 'sources', 'chunks': chunks})
                 logger.info("Sources payload: mode=%s, chunks=%d, bytes=%d", req.mode, len(chunks), len(sources_json))
                 yield f"data: {sources_json}\n\n"
@@ -347,27 +335,26 @@ async def query(request: Request):
             # Run post-stream ops (precision, verification, followups) in parallel
             full_text = "".join(full_answer)
             futures = {}
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                if req.mode != "deps" and results:
-                    futures[pool.submit(score_retrieval_precision, req.query, results)] = "precision"
-                if full_text and results:
-                    futures[pool.submit(verify_citations, full_text, results)] = "verification"
-                futures[pool.submit(generate_followups, req.query, full_text)] = "followups"
+            if req.mode != "deps" and results:
+                futures[_post_stream_pool.submit(score_retrieval_precision, req.query, results)] = "precision"
+            if full_text and results:
+                futures[_post_stream_pool.submit(verify_citations, full_text, results)] = "verification"
+            futures[_post_stream_pool.submit(generate_followups, req.query, full_text)] = "followups"
 
-                for future in as_completed(futures):
-                    kind = futures[future]
-                    try:
-                        result = future.result()
-                        if kind == "precision":
-                            yield f"data: {json.dumps({'type': 'precision', 'precision': result['precision'], 'scores': result['scores']})}\n\n"
-                            _log_precision(req.query, req.mode, result)
-                        elif kind == "verification" and result:
-                            yield f"data: {json.dumps({'type': 'verification', 'citations': result})}\n\n"
-                            _log_verification(req.query, req.mode, result)
-                        elif kind == "followups":
-                            yield f"data: {json.dumps({'type': 'followups', 'questions': result})}\n\n"
-                    except Exception as e:
-                        logger.warning("%s failed: %s", kind, e)
+            for future in as_completed(futures):
+                kind = futures[future]
+                try:
+                    result = future.result()
+                    if kind == "precision":
+                        yield f"data: {json.dumps({'type': 'precision', 'precision': result['precision'], 'scores': result['scores']})}\n\n"
+                        _log_precision(req.query, req.mode, result)
+                    elif kind == "verification" and result:
+                        yield f"data: {json.dumps({'type': 'verification', 'citations': result})}\n\n"
+                        _log_verification(req.query, req.mode, result)
+                    elif kind == "followups":
+                        yield f"data: {json.dumps({'type': 'followups', 'questions': result})}\n\n"
+                except Exception as e:
+                    logger.warning("%s failed: %s", kind, e)
 
     return StreamingResponse(stream_response(), media_type="text/event-stream")
 
