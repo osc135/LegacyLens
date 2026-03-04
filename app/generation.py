@@ -5,7 +5,7 @@ import tiktoken
 from langfuse.openai import OpenAI
 from app.config import (
     OPENAI_API_KEY, LLM_MODEL, FOLLOWUPS_MODEL, LLM_TEMPERATURE,
-    MAX_FOLLOWUP_ANSWER_CHARS, MAX_CONTEXT_TOKENS_PER_CHUNK,
+    MAX_CONTEXT_TOKENS_PER_CHUNK,
 )
 
 logger = logging.getLogger(__name__)
@@ -285,8 +285,10 @@ def generate_deps_stream(query: str, graph: dict):
             yield chunk.choices[0].delta.content
 
 
-def generate_followups(query: str, answer: str) -> list[str]:
-    """Generate 3 relevant follow-up questions based on the Q&A."""
+def generate_followups(query: str, results: list[dict]) -> list[str]:
+    """Generate 3 relevant follow-up questions based on the query and retrieved sources."""
+    source_names = [r["name"] for r in results] if results else []
+    source_summary = ", ".join(source_names) if source_names else "none"
     response = openai_client.chat.completions.create(
         model=FOLLOWUPS_MODEL,
         messages=[
@@ -295,7 +297,7 @@ def generate_followups(query: str, answer: str) -> list[str]:
                 "content": (
                     "You generate follow-up questions for LegacyLens, a tool that searches "
                     "LAPACK Fortran source code and returns subroutine implementations. "
-                    "Given a user question and the answer, suggest exactly 3 follow-up questions.\n\n"
+                    "Given a user question and the subroutines found, suggest exactly 3 follow-up questions.\n\n"
                     "RULES:\n"
                     "- Each question MUST reference a specific LAPACK subroutine by name (e.g. DGESV, DPOTRF, DGESVD)\n"
                     "- Questions must be answerable by reading LAPACK .f source files\n"
@@ -308,7 +310,7 @@ def generate_followups(query: str, answer: str) -> list[str]:
             },
             {
                 "role": "user",
-                "content": f"User asked: {query}\n\nAnswer given:\n{answer[:MAX_FOLLOWUP_ANSWER_CHARS]}",
+                "content": f"User asked: {query}\n\nSubroutines found: {source_summary}",
             },
         ],
     )

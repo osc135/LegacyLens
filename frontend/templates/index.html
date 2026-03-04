@@ -1144,7 +1144,7 @@ async function doStream(q,mdEl,block,mode){
             for(const ev of events){
                 const dataLine=ev.split('\n').find(l=>l.startsWith('data: '));
                 if(!dataLine)continue;
-                const d=dataLine.slice(6);if(d==='[DONE]'){addFeedback(block,q,mode,traceId);mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);mdEl.classList.add('copy-wrap');addCopyBtn(mdEl,()=>raw);continue;}
+                const d=dataLine.slice(6);if(d==='[DONE]'){addFeedback(block,q,mode,traceId);mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);mdEl.classList.add('copy-wrap');addCopyBtn(mdEl,()=>raw);sendBtn.disabled=false;input.focus();continue;}
                 try{
                     const p=JSON.parse(d);
                     if(p.type==='graph'){addGraph(block,p.data);if(p.data)entry.graph=block.querySelector('.dep-graph')?.textContent.replace('Call Graph','').trim()||null;bottom()}

@@ -79,7 +79,7 @@ def _warm_cache():
             answer_text = "".join(full_answer)
 
             try:
-                followups = generate_followups(query, answer_text)
+                followups = generate_followups(query, results)
             except Exception:
                 followups = []
 
@@ -303,6 +303,9 @@ async def query(request: Request):
                 except Exception as e:
                     logger.error("Graph serialization failed: %s", e)
 
+            # Start followup generation now (runs in parallel with answer streaming)
+            followup_future = _post_stream_pool.submit(generate_followups, req.query, results)
+
             # Step 2: Stream the generated answer
             full_answer = []
             try:
@@ -326,20 +329,29 @@ async def query(request: Request):
             except Exception as e:
                 logger.error("Source serialization failed: %s", e)
 
+            # Yield followups immediately if ready, before [DONE]
+            try:
+                followup_result = followup_future.result(timeout=0.1)
+                yield f"data: {json.dumps({'type': 'followups', 'questions': followup_result})}\n\n"
+                followup_future = None
+            except Exception:
+                pass  # not ready yet, will yield after [DONE]
+
             # Send trace ID and [DONE] immediately so the answer feels complete
             if trace_id:
                 yield f"data: {json.dumps({'type': 'trace', 'trace_id': trace_id})}\n\n"
 
             yield "data: [DONE]\n\n"
 
-            # Run post-stream ops (precision, verification, followups) in parallel
+            # Run post-stream ops (precision, verification) in parallel
             full_text = "".join(full_answer)
             futures = {}
             if req.mode != "deps" and results:
                 futures[_post_stream_pool.submit(score_retrieval_precision, req.query, results)] = "precision"
             if full_text and results:
                 futures[_post_stream_pool.submit(verify_citations, full_text, results)] = "verification"
-            futures[_post_stream_pool.submit(generate_followups, req.query, full_text)] = "followups"
+            if followup_future is not None:
+                futures[followup_future] = "followups"
 
             for future in as_completed(futures):
                 kind = futures[future]

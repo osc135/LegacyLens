@@ -76,8 +76,8 @@ def test_docs_mode():
 def test_followup_generation():
     """Test that follow-up questions are generated correctly."""
     query = "What does DGESV do?"
-    answer = "DGESV solves a system of linear equations Ax=b using LU factorization."
-    followups = generate_followups(query, answer)
+    results = search(query, top_k=5)
+    followups = generate_followups(query, results)
 
     print(f"Follow-up questions for '{query}':")
     for i, q in enumerate(followups, 1):
