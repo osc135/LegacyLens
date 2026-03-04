@@ -2,13 +2,15 @@ import os
 import re
 import tiktoken
 from openai import OpenAI
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
+from pinecone_text.sparse import BM25Encoder
 import logging
 from app.config import (
     OPENAI_API_KEY,
     PINECONE_API_KEY,
     PINECONE_INDEX_NAME,
     EMBEDDING_MODEL,
+    EMBEDDING_DIMENSIONS,
     LAPACK_DATA_DIR,
     MAX_TOKENS,
     CHUNK_TOKENS,
@@ -24,7 +26,8 @@ logger = logging.getLogger(__name__)
 # Initialize clients
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(PINECONE_INDEX_NAME)
+
+BM25_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "bm25_model.json")
 
 # Token counter for text-embedding-3-small
 encoding = tiktoken.encoding_for_model(EMBEDDING_MODEL)
@@ -287,21 +290,53 @@ def generate_embeddings(texts: list[str], max_retries: int = 5) -> list[list[flo
     raise RuntimeError(f"Failed after {max_retries} retries")
 
 
-def upsert_to_pinecone(vectors: list[dict], batch_size: int = UPSERT_BATCH_SIZE):
+def upsert_to_pinecone(vectors: list[dict], batch_size: int = UPSERT_BATCH_SIZE, index=None):
     """Upload vectors with metadata to Pinecone in batches."""
+    if index is None:
+        index = pc.Index(PINECONE_INDEX_NAME)
     for i in range(0, len(vectors), batch_size):
         batch = vectors[i : i + batch_size]
         index.upsert(vectors=batch)
         print(f"  Upserted batch {i // batch_size + 1} ({len(batch)} vectors)")
 
 
+def recreate_index():
+    """Delete and recreate the Pinecone index with dotproduct metric for hybrid search."""
+    import time
+
+    existing = [idx.name for idx in pc.list_indexes()]
+    if PINECONE_INDEX_NAME in existing:
+        print(f"  Deleting existing index '{PINECONE_INDEX_NAME}'...")
+        pc.delete_index(PINECONE_INDEX_NAME)
+        time.sleep(5)
+
+    print(f"  Creating index '{PINECONE_INDEX_NAME}' with dotproduct metric...")
+    pc.create_index(
+        name=PINECONE_INDEX_NAME,
+        dimension=EMBEDDING_DIMENSIONS,
+        metric="dotproduct",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    )
+
+    # Wait for index to be ready
+    while not pc.describe_index(PINECONE_INDEX_NAME).status["ready"]:
+        print("  Waiting for index to be ready...")
+        time.sleep(5)
+
+    print("  Index ready.")
+    return pc.Index(PINECONE_INDEX_NAME)
+
+
 def run_ingestion():
-    """Main ingestion pipeline."""
-    print("Step 1: Finding Fortran files...")
+    """Main ingestion pipeline with hybrid (dense + sparse BM25) vectors."""
+    print("Step 1: Recreating Pinecone index with dotproduct metric...")
+    index = recreate_index()
+
+    print("\nStep 2: Finding Fortran files...")
     files = find_fortran_files(LAPACK_DATA_DIR)
     print(f"  Found {len(files)} Fortran files")
 
-    print("\nStep 2: Parsing subroutines...")
+    print("\nStep 3: Parsing subroutines...")
     all_chunks = []
     for filepath in files:
         chunks = parse_subroutines(filepath)
@@ -310,19 +345,32 @@ def run_ingestion():
 
     print(f"  Parsed {len(all_chunks)} total chunks")
 
-    print("\nStep 3: Generating embeddings...")
+    print("\nStep 4: Fitting BM25 on corpus...")
+    corpus = [chunk["embedding_text"] for chunk in all_chunks]
+    bm25 = BM25Encoder()
+    bm25.fit(corpus)
+    os.makedirs(os.path.dirname(BM25_MODEL_PATH), exist_ok=True)
+    bm25.dump(BM25_MODEL_PATH)
+    print(f"  BM25 model saved to {BM25_MODEL_PATH}")
+
+    print("\nStep 5: Generating dense embeddings and sparse vectors...")
     all_vectors = []
 
     for i in range(0, len(all_chunks), EMBEDDING_BATCH_SIZE):
         batch = all_chunks[i : i + EMBEDDING_BATCH_SIZE]
         texts = [chunk["embedding_text"] for chunk in batch]
         embeddings = generate_embeddings(texts)
+        sparse_vectors = [bm25.encode_documents(t) for t in texts]
 
-        for chunk, embedding in zip(batch, embeddings):
+        for chunk, embedding, sparse in zip(batch, embeddings, sparse_vectors):
             vector_id = f"{chunk['file_path']}::{chunk['name']}"
             all_vectors.append({
                 "id": vector_id,
                 "values": embedding,
+                "sparse_values": {
+                    "indices": sparse["indices"],
+                    "values": sparse["values"],
+                },
                 "metadata": {
                     "name": chunk["name"],
                     "file_path": chunk["file_path"],
@@ -335,10 +383,10 @@ def run_ingestion():
 
         print(f"  Embedded batch {i // EMBEDDING_BATCH_SIZE + 1}/{(len(all_chunks) + EMBEDDING_BATCH_SIZE - 1) // EMBEDDING_BATCH_SIZE}")
 
-    print(f"\nStep 4: Uploading {len(all_vectors)} vectors to Pinecone...")
-    upsert_to_pinecone(all_vectors)
+    print(f"\nStep 6: Uploading {len(all_vectors)} vectors to Pinecone...")
+    upsert_to_pinecone(all_vectors, index=index)
 
-    print(f"\nDone! Ingested {len(all_vectors)} chunks into Pinecone.")
+    print(f"\nDone! Ingested {len(all_vectors)} hybrid vectors into Pinecone.")
 
 
 if __name__ == "__main__":

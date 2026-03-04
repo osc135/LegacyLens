@@ -1,7 +1,10 @@
+import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from langfuse.openai import OpenAI
 from pinecone import Pinecone
+from pinecone_text.sparse import BM25Encoder
 from collections import deque
 from app.config import (
     OPENAI_API_KEY,
@@ -14,6 +17,7 @@ from app.config import (
     QUERY_EXPANSION_TEMPERATURE,
     DEPS_MAX_DEPTH,
     DEPS_MAX_NODES,
+    RERANK_CANDIDATES,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,6 +28,10 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(PINECONE_INDEX_NAME)
 
 EXCLUDED_PREFIXES = ("TESTING/", "INSTALL/", "CMAKE/", "CBLAS/", "LAPACKE/", "BLAS/")
+
+# Load fitted BM25 model for sparse query vectors
+BM25_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "bm25_model.json")
+bm25 = BM25Encoder().load(BM25_MODEL_PATH)
 
 # Reuse a single thread pool across requests to avoid creation overhead
 _executor = ThreadPoolExecutor(max_workers=6)
@@ -91,23 +99,30 @@ def describe_code_for_search(code: str) -> list[str]:
         return [code]
 
 
-def embed_queries(queries: list[str]) -> list[list[float]]:
-    """Embed multiple queries in a single API call."""
+def embed_queries(queries: list[str]) -> list[tuple[list[float], dict]]:
+    """Embed multiple queries, returning (dense_vector, sparse_vector) pairs."""
     response = openai_client.embeddings.create(
         model=EMBEDDING_MODEL,
         input=queries,
     )
-    return [item.embedding for item in response.data]
+    dense_vectors = [item.embedding for item in response.data]
+    sparse_vectors = [bm25.encode_queries(q) for q in queries]
+    return list(zip(dense_vectors, sparse_vectors))
 
 
-def embed_query(query: str) -> list[float]:
-    """Turn a single query into a vector."""
+def embed_query(query: str) -> tuple[list[float], dict]:
+    """Turn a single query into a (dense, sparse) vector pair."""
     return embed_queries([query])[0]
 
 
-def _pinecone_query(vector: list[float], fetch_k: int) -> list:
-    """Run a single Pinecone query and return matches."""
-    return index.query(vector=vector, top_k=fetch_k, include_metadata=True).matches
+def _pinecone_query(vector: list[float], sparse_vector: dict, fetch_k: int) -> list:
+    """Run a single hybrid Pinecone query and return matches."""
+    return index.query(
+        vector=vector,
+        sparse_vector=sparse_vector,
+        top_k=fetch_k,
+        include_metadata=True,
+    ).matches
 
 
 def _collect_matches(all_matches: list, seen_ids: set, all_results: list):
@@ -131,6 +146,64 @@ def _collect_matches(all_matches: list, seen_ids: set, all_results: list):
                     break
 
 
+def rerank(query: str, results: list[dict], top_k: int) -> list[dict]:
+    """Use GPT-4o-mini to rerank results by relevance to the query."""
+    if len(results) <= top_k:
+        return results
+
+    # Build a numbered list of candidates for the LLM
+    candidates = []
+    for i, r in enumerate(results):
+        name = r["name"]
+        # Use first 200 chars of text for context
+        snippet = r["text"][:200].replace("\n", " ").strip()
+        candidates.append(f"{i}: {name} — {snippet}")
+
+    candidates_text = "\n".join(candidates)
+
+    try:
+        response = openai_client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a relevance judge for LAPACK Fortran subroutine search results. "
+                        "Given a user query and a numbered list of candidate subroutines, "
+                        f"select the {top_k} MOST RELEVANT candidates. "
+                        "Return ONLY a JSON array of their indices in order of relevance, "
+                        f"e.g. [0, 3, 1, 4, 2]. Return exactly {top_k} indices."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Query: {query}\n\nCandidates:\n{candidates_text}",
+                },
+            ],
+        )
+        indices_str = response.choices[0].message.content.strip()
+        # Strip markdown code fences if present
+        if indices_str.startswith("```"):
+            indices_str = indices_str.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        indices = json.loads(indices_str)
+        reranked = []
+        for idx in indices[:top_k]:
+            if isinstance(idx, int) and 0 <= idx < len(results):
+                reranked.append(results[idx])
+        # If LLM returned fewer than top_k valid indices, fill from original order
+        if len(reranked) < top_k:
+            seen = {r["name"] for r in reranked}
+            for r in results:
+                if r["name"] not in seen and len(reranked) < top_k:
+                    reranked.append(r)
+                    seen.add(r["name"])
+        return reranked
+    except Exception as e:
+        logger.warning("Reranking failed, using original order: %s", e)
+        return results[:top_k]
+
+
 def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_search: bool = False, fetch_multiplier: int = FETCH_MULTIPLIER) -> list[dict]:
     """
     Search Pinecone for code chunks that match the query.
@@ -152,8 +225,8 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
     original_embed_future = _executor.submit(embed_queries, [query])
 
     # Phase 2: As soon as original embedding is ready, search Pinecone
-    original_vector = original_embed_future.result()[0]
-    original_search_future = _executor.submit(_pinecone_query, original_vector, fetch_k)
+    original_dense, original_sparse = original_embed_future.result()[0]
+    original_search_future = _executor.submit(_pinecone_query, original_dense, original_sparse, fetch_k)
 
     # Phase 3: When expansion is ready, batch-embed expanded queries (as future)
     expanded_search_futures = []
@@ -164,12 +237,12 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
         if extra_queries:
             # Submit batch embedding as a future so original Pinecone can finish in parallel
             expanded_embed_future = _executor.submit(embed_queries, extra_queries)
-            expanded_vectors = expanded_embed_future.result()
+            expanded_pairs = expanded_embed_future.result()
 
             # Phase 4: Fire all expanded Pinecone queries in parallel
             expanded_search_futures = [
-                _executor.submit(_pinecone_query, vec, fetch_k)
-                for vec in expanded_vectors
+                _executor.submit(_pinecone_query, dense, sparse, fetch_k)
+                for dense, sparse in expanded_pairs
             ]
 
     # Collect original results (likely already done by now)
@@ -185,9 +258,12 @@ def search(query: str, top_k: int = TOP_K, use_expansion: bool = True, code_sear
         if not r["file_path"].startswith(EXCLUDED_PREFIXES)
     ]
 
-    # Sort by score (best first) and return top_k
+    # Sort by score (best first) and take rerank candidates
     all_results.sort(key=lambda x: x["score"], reverse=True)
-    return all_results[:top_k]
+    candidates = all_results[:RERANK_CANDIDATES]
+
+    # Rerank with LLM to filter irrelevant results
+    return rerank(query, candidates, top_k)
 
 
 def search_by_name(name: str) -> dict | None:
@@ -202,9 +278,10 @@ def search_by_name(name: str) -> dict | None:
     try:
         # We need a vector for Pinecone query even with metadata filter,
         # so embed the name itself
-        query_vector = embed_query(name_upper)
+        dense, sparse = embed_query(name_upper)
         results = index.query(
-            vector=query_vector,
+            vector=dense,
+            sparse_vector=sparse,
             top_k=1,
             include_metadata=True,
             filter={"name": {"$eq": name_upper}},
@@ -225,9 +302,10 @@ def search_by_name(name: str) -> dict | None:
 
     # Fallback: try _PART1 suffix (chunked subroutines)
     try:
-        query_vector = embed_query(name_upper)
+        dense, sparse = embed_query(name_upper)
         results = index.query(
-            vector=query_vector,
+            vector=dense,
+            sparse_vector=sparse,
             top_k=5,
             include_metadata=True,
             filter={"name": {"$eq": f"{name_upper}_PART1"}},

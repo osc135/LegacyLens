@@ -1,4 +1,6 @@
+import json
 import logging
+import re
 import tiktoken
 from langfuse.openai import OpenAI
 from app.config import (
@@ -11,20 +13,25 @@ logger = logging.getLogger(__name__)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 _encoding = tiktoken.encoding_for_model(LLM_MODEL)
 
-CITATION_RULES = """- You are given numbered sources [Source 1] through [Source N]. IMPORTANT: When you use information from a source, you MUST cite it inline using the bracketed number matching the source (e.g. [1], [2], [3]). Place the citation immediately after the sentence that uses that source's information. Every claim from a source needs a citation. Example: "The `DGESV` subroutine solves general linear systems [1]. It uses LU factorization with partial pivoting [2].\""""
+CITATION_RULES = """- You are given numbered sources [Source 1] through [Source N]. IMPORTANT: You MUST cite EVERY source at least once. When you use information from a source, cite it inline using the bracketed number (e.g. [1], [2], [3]). Place the citation immediately after the sentence that uses that source's information. When multiple sources contain related code (e.g. precision variants), group them in a single citation like [1][2][3][4]. Every source number from [1] through [N] must appear at least once in your response."""
 
 SYSTEM_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library.
 
+{CITATION_RULES}
+
 Rules:
 - Be concise — answer what was asked without padding. Do NOT list every similar subroutine — focus on the most relevant 1-2.
-- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists.
-{CITATION_RULES}
+- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists. NEVER use LaTeX math notation (no \\( \\), \\[ \\], or $ $) — write math in plain text like `A = P * L * U`.
 - Explain in plain English for developers unfamiliar with Fortran.
 - Wrap Fortran identifiers in backticks (e.g. `DGESV`, `INFO`, `LDA`).
 - If the retrieved context doesn't answer the question, say so clearly.
-- Do NOT repeat the same information about multiple nearly-identical subroutines. Mention the primary one, then briefly note variants exist."""
+- Synthesize information from ALL provided sources. Different sources may cover different aspects — cite each one where relevant.
+
+{CITATION_RULES}"""
 
 EXPLAIN_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to explain code clearly for developers unfamiliar with Fortran.
+
+{CITATION_RULES}
 
 Given source code from LAPACK, provide a clear plain-English explanation with this structure:
 
@@ -41,13 +48,16 @@ A table or list of the key input/output parameters and what they mean.
 Any important edge cases, error conditions, or performance notes.
 
 Rules:
-- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists.
-{CITATION_RULES}
+- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists. NEVER use LaTeX math notation (no \\( \\), \\[ \\], or $ $) — write math in plain text like `A = P * L * U`.
 - Wrap all Fortran identifiers in backticks.
 - Explain in plain English — assume the reader does not know Fortran syntax.
-- Focus on the primary subroutine. If variants exist, mention them briefly at the end."""
+- Synthesize information from ALL provided sources. Different sources may cover different aspects — cite each one where relevant.
+
+{CITATION_RULES}"""
 
 DOCS_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to generate clean, structured documentation.
+
+{CITATION_RULES}
 
 Given source code from LAPACK, generate documentation in this exact format:
 
@@ -84,10 +94,14 @@ Rules:
 {CITATION_RULES}
 - Wrap all Fortran identifiers in backticks.
 - Be precise — extract parameter info directly from the source code comments.
-- If info is not available in the sources, omit that section rather than guessing."""
+- If info is not available in the sources, omit that section rather than guessing.
+
+{CITATION_RULES}"""
 
 
 PATTERNS_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to find and explain code patterns.
+
+{CITATION_RULES}
 
 The user has pasted a code snippet. You are given similar code chunks retrieved from the LAPACK codebase. Analyze them and respond with:
 
@@ -108,13 +122,17 @@ Highlight shared patterns across the snippet and retrieved code:
 Point out meaningful differences between the snippet and the retrieved code — different algorithms, optimizations, or edge-case handling.
 
 Rules:
-- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists.
+- Use markdown: ## headings, **bold**, `inline code`, ```fortran code blocks, and bullet lists. NEVER use LaTeX math notation (no \\( \\), \\[ \\], or $ $) — write math in plain text like `A = P * L * U`.
 {CITATION_RULES}
 - Wrap all Fortran identifiers in backticks.
 - Focus on patterns that help the user understand LAPACK's design philosophy.
-- If the retrieved code is not related to the snippet, say so clearly."""
+- If the retrieved code is not related to the snippet, say so clearly.
+
+{CITATION_RULES}"""
 
 DEPS_PROMPT = f"""You are an expert Fortran developer specializing in the LAPACK linear algebra library. Your job is to visualize and explain subroutine dependency chains.
+
+{CITATION_RULES}
 
 Given a dependency graph and the source code of each resolved subroutine, respond with:
 
@@ -143,7 +161,9 @@ Rules:
 {CITATION_RULES}
 - Wrap all Fortran identifiers in backticks.
 - Keep the Mermaid diagram clean — no duplicate edges, use short labels.
-- If a dependency was not found in the codebase, note it as an external routine (e.g., BLAS)."""
+- If a dependency was not found in the codebase, note it as an external routine (e.g., BLAS).
+
+{CITATION_RULES}"""
 
 PROMPTS = {
     "ask": SYSTEM_PROMPT,
@@ -288,3 +308,63 @@ def generate_followups(query: str, answer: str) -> list[str]:
     )
     lines = response.choices[0].message.content.strip().split("\n")
     return [l.strip() for l in lines if l.strip()][:3]
+
+
+def verify_citations(answer: str, results: list[dict]) -> list[dict]:
+    """Verify that each citation in the answer is grounded in its referenced source.
+
+    Returns a list of dicts: [{"citation": N, "grounded": bool, "reason": "..."}]
+    """
+    # Find all [N] citations and extract the sentence around each
+    citation_pattern = re.compile(r'\[(\d+)\]')
+    citations_found = {}  # {citation_num: claim_sentence}
+
+    # Split answer into sentences (rough split on ., !, ? followed by space or newline)
+    sentences = re.split(r'(?<=[.!?])\s+', answer)
+    for sentence in sentences:
+        for match in citation_pattern.finditer(sentence):
+            num = int(match.group(1))
+            if num not in citations_found and 1 <= num <= len(results):
+                # Clean the sentence of citation markers for readability
+                clean = citation_pattern.sub('', sentence).strip()
+                if clean:
+                    citations_found[num] = clean
+
+    if not citations_found:
+        return []
+
+    # Build verification prompt with all claims and their sources
+    claims_text = ""
+    for num, claim in sorted(citations_found.items()):
+        source = results[num - 1]
+        source_snippet = source.get("text", "")[:1500]
+        claims_text += f"Citation [{num}]:\n"
+        claims_text += f"  Claim: \"{claim}\"\n"
+        claims_text += f"  Source ({source.get('name', 'unknown')}):\n  {source_snippet}\n\n"
+
+    response = openai_client.chat.completions.create(
+        model=LLM_MODEL,
+        temperature=0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You verify whether cited claims are supported by their sources. "
+                    "For each citation, determine if the claim is grounded in the source text. "
+                    "Respond with ONLY a JSON array, no other text. Each element: "
+                    '{"citation": N, "grounded": true/false, "reason": "brief explanation"}. '
+                    "ALWAYS provide a reason, even for grounded citations — explain what in the source supports the claim. "
+                    "A claim is grounded if the source reasonably supports the statement. "
+                    "Be lenient — minor paraphrasing is fine. Only flag clearly unsupported claims."
+                ),
+            },
+            {"role": "user", "content": claims_text},
+        ],
+    )
+
+    raw = response.choices[0].message.content.strip()
+    # Extract JSON array from response (handle markdown code blocks)
+    json_match = re.search(r'\[.*\]', raw, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group())
+    return []

@@ -260,6 +260,11 @@
             box-shadow:0 2px 8px rgba(124,106,239,.2);
         }
         .cite:hover{box-shadow:0 2px 12px rgba(124,106,239,.4);transform:translateY(-1px)}
+        .cite-warn{background:linear-gradient(135deg,#ef6a4c,#fa8a4f)!important;box-shadow:0 2px 8px rgba(239,106,76,.3);animation:cite-pulse 2s ease-in-out 1}
+        .cite-warn:hover{box-shadow:0 2px 12px rgba(239,106,76,.5)}
+        .cite-warn .cite-tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e8e8ef;font-size:11px;font-weight:400;padding:6px 10px;border-radius:6px;white-space:nowrap;max-width:280px;white-space:normal;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.4);pointer-events:none}
+        .cite-warn:hover .cite-tip{display:block}
+        @keyframes cite-pulse{0%,100%{opacity:1}50%{opacity:.7}}
 
         /* ═══ SOURCES ═══ */
         .src-section{margin-top:28px}
@@ -690,6 +695,8 @@
             .md th{background:#f4f4f8!important;color:#444!important;border-color:#ddd!important}
             .md td{border-color:#ddd!important;color:#333!important}
             .md a,.cite{color:#5b4cc4!important}
+            .cite-warn{background:#ef6a4c!important;color:#fff!important}
+            .cite-tip{display:none!important}
 
             .dep-graph{background:#f8f8fc!important;border-color:#ddd!important;color:#333!important}
             .dep-graph-title{color:#5b4cc4!important}
@@ -1092,6 +1099,8 @@ function doQuery(q,mode){
     thread.appendChild(turn);bottom();
     const mdEl=document.getElementById('cur-md');
     const block=document.getElementById('cur-block');
+    mdEl.removeAttribute('id');
+    block.removeAttribute('id');
     doStream(q,mdEl,block,mode);
 }
 
@@ -1099,9 +1108,17 @@ async function doStream(q,mdEl,block,mode){
     let raw='';let traceId='';
     const entry=conversationLog[conversationLog.length-1];
     try{
+        // Build conversation context from the previous turn for better follow-up retrieval
+        let context='';
+        if(conversationLog.length>1){
+            const prev=conversationLog[conversationLog.length-2];
+            if(prev&&prev.query&&prev.answer){
+                context=prev.query+'\n'+prev.answer.slice(0,500);
+            }
+        }
         const res=await fetch('/query',{
             method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({query:q,mode:mode||'ask'}),
+            body:JSON.stringify({query:q,mode:mode||'ask',context:context}),
         });
         const reader=res.body.getReader();
         const dec=new TextDecoder();let buf='';
@@ -1118,6 +1135,7 @@ async function doStream(q,mdEl,block,mode){
                     if(p.type==='graph'){addGraph(block,p.data);if(p.data)entry.graph=block.querySelector('.dep-graph')?.textContent.replace('Call Graph','').trim()||null;bottom()}
                     else if(p.type==='answer'){raw+=p.content;renderMd(mdEl,raw,true);bottom()}
                     else if(p.type==='sources'){mdEl.removeAttribute('id');renderMd(mdEl,raw,false);renderMermaid(mdEl);addSrc(block,p.chunks);entry.sources=p.chunks||[];bottom()}
+                    else if(p.type==='verification'){console.log('Citation verification:',p.citations);applyCiteVerification(mdEl,p.citations)}
                     else if(p.type==='trace'){traceId=p.trace_id||''}
                     else if(p.type==='followups'){addFollowups(block,p.questions);entry.followups=p.questions||[];bottom()}
                 }catch(err){console.error('SSE parse error:',err,d)}
@@ -1171,11 +1189,13 @@ function addSrc(container,chunks){
     const div=document.createElement('div');
     div.className='src-section';
     let cards='';
+    const maxScore=Math.max(...chunks.map(c=>c.score))||1;
     chunks.forEach((c,i)=>{
         const uid=id+'-'+i;
         const num=i+1;
-        const pct=(c.score*100).toFixed(1);
-        const cls=c.score>=.75?'s-hi':c.score>=.5?'s-md':'s-lo';
+        const norm=c.score/maxScore;
+        const pct=(norm*100).toFixed(1);
+        const cls=norm>=.6?'s-hi':norm>=.4?'s-md':'s-lo';
         const deps=c.dependencies&&c.dependencies.length
             ?`<div class="sc-deps">Calls: ${Array.isArray(c.dependencies)?c.dependencies.join(', '):c.dependencies}</div>`:'';
         cards+=`<div class="sc" data-src-num="${num}">
@@ -1189,7 +1209,7 @@ function addSrc(container,chunks){
                     </div>
                 </div>
                 <div class="sc-rt">
-                    <span class="sc-score ${cls}">${pct}%</span>
+                    <span class="sc-score ${cls}" title="Relevance: ${pct}% — Combined semantic similarity (OpenAI embedding) and keyword match (BM25), normalized to the top result.">${pct}%</span>
                     <span class="sc-chev" id="cv-${uid}">\u25B6</span>
                 </div>
             </div>
@@ -1200,7 +1220,10 @@ function addSrc(container,chunks){
     div.innerHTML=`
         <div class="src-header">Sources</div>
         <div class="src-list">${cards}</div>`;
-    container.appendChild(div);
+    // Always insert sources right after the markdown answer
+    const mdArea=container.querySelector('.md');
+    if(mdArea&&mdArea.nextSibling)container.insertBefore(div,mdArea.nextSibling);
+    else container.appendChild(div);
     // Add copy buttons to source code blocks
     div.querySelectorAll('.sc-code').forEach(codeEl=>{
         const pre=codeEl.querySelector('pre');
@@ -1263,6 +1286,25 @@ function renderMermaid(el){
     if(codeBlocks.length>0){
         try{mermaid.run({querySelector:'.mermaid'})}catch(e){console.warn('Mermaid render error:',e)}
     }
+}
+
+function applyCiteVerification(mdEl,citations){
+    if(!citations||!citations.length)return;
+    const citeEls=mdEl.querySelectorAll('a.cite');
+    const lookup={};
+    citations.forEach(c=>{if(!c.grounded)lookup[c.citation]=c.reason||'Claim not supported by source'});
+    citeEls.forEach(el=>{
+        const num=parseInt(el.textContent,10);
+        if(lookup[num]){
+            el.classList.add('cite-warn');
+            el.title='Ungrounded: '+lookup[num];
+            const tip=document.createElement('span');
+            tip.className='cite-tip';
+            tip.textContent=lookup[num];
+            el.style.position='relative';
+            el.appendChild(tip);
+        }
+    });
 }
 
 function addFollowups(container,questions){

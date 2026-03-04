@@ -12,9 +12,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from langfuse import get_client
-from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT
+from app.config import MAX_QUERY_LENGTH, VALID_MODES, PATTERNS_TOP_K, DEPS_MAX_DEPTH, DEPS_MAX_NODES, FEEDBACK_DIR, MAX_FEEDBACK_COMMENT, VERIFICATION_LOG
 from app.retrieval import search, resolve_dependency_graph
-from app.generation import generate_answer_stream, generate_followups, generate_deps_stream
+from app.generation import generate_answer_stream, generate_followups, generate_deps_stream, verify_citations
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ app.add_middleware(SlowAPIMiddleware)
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=MAX_QUERY_LENGTH)
     mode: str = Field(default="ask")
+    context: str = Field(default="", max_length=1000)
 
     @field_validator("query")
     @classmethod
@@ -71,6 +72,23 @@ class FeedbackRequest(BaseModel):
 
 
 templates = Jinja2Templates(directory="frontend/templates")
+
+
+def _log_verification(query: str, mode: str, citations: list[dict]):
+    """Append a verification result to the JSONL log file."""
+    try:
+        os.makedirs(os.path.dirname(VERIFICATION_LOG), exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "mode": mode,
+            "citations": citations,
+            "all_grounded": all(c.get("grounded", False) for c in citations),
+        }
+        with open(VERIFICATION_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.warning("Failed to write verification log: %s", e)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,7 +145,9 @@ async def query(request: Request):
                 elif req.mode == "patterns":
                     results = search(req.query, top_k=PATTERNS_TOP_K, code_search=True)
                 else:
-                    results = search(req.query, top_k=5)
+                    # Prepend conversation context for better follow-up retrieval
+                    search_query = f"{req.context}\n{req.query}" if req.context else req.query
+                    results = search(search_query, top_k=5)
             except Exception as e:
                 logger.error("Retrieval failed: %s", e)
                 yield f"data: {json.dumps({'type': 'error', 'content': 'Search service unavailable.'})}\n\n"
@@ -171,6 +191,18 @@ async def query(request: Request):
                 yield f"data: {sources_json}\n\n"
             except Exception as e:
                 logger.error("Source serialization failed: %s", e)
+
+            # Verify citation grounding
+            try:
+                full_text = "".join(full_answer)
+                if full_text and results:
+                    citation_checks = verify_citations(full_text, results)
+                    if citation_checks:
+                        yield f"data: {json.dumps({'type': 'verification', 'citations': citation_checks})}\n\n"
+                        # Log to file for review
+                        _log_verification(req.query, req.mode, citation_checks)
+            except Exception as e:
+                logger.warning("Citation verification failed: %s", e)
 
             # Send trace ID so frontend can attach feedback to the right trace
             if trace_id:

@@ -25,6 +25,7 @@ LLM_MODEL = "gpt-4o-mini"
 # Retrieval
 TOP_K = 5
 FETCH_MULTIPLIER = 3  # Over-fetch ratio to compensate for filtering
+RERANK_CANDIDATES = 10  # Number of candidates to send to LLM reranker
 
 # Generation
 LLM_TEMPERATURE = 0.3
@@ -50,6 +51,7 @@ PATTERNS_TOP_K = 5
 
 # Feedback
 FEEDBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "feedback")
+VERIFICATION_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "verification_log.jsonl")
 MAX_FEEDBACK_COMMENT = 500
 
 # Paths

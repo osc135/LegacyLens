@@ -10,3 +10,4 @@ uvicorn
 jinja2
 slowapi
 langfuse
+pinecone-text
